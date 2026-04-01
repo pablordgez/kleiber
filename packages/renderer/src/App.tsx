@@ -18,6 +18,7 @@ declare global {
           yoloDefault?: boolean;
         }) => Promise<Project>;
         remove: (id: UUID) => Promise<void>;
+        update: (id: UUID, data: Partial<Pick<Project, 'name' | 'yoloDefault'>>) => Promise<void>;
       };
       sessions: {
         list: (projectId: UUID) => Promise<Session[]>;

@@ -3,33 +3,41 @@ import { IPC_CHANNELS, SUPPORTED_AGENT_CLIS } from "@kleiber/shared";
 import log from "electron-log";
 import type { Project, Session, AgentCli } from "@kleiber/shared";
 
+import { PersistenceStore } from "../store";
+
+const store = new PersistenceStore();
+
 export function registerIpcHandlers(): void {
   // --- Projects ---
   ipcMain.handle(IPC_CHANNELS.projects.list, async (): Promise<Project[]> => {
     log.debug("IPC: projects:list");
-    return [];
+    return store.listProjects();
   });
 
   ipcMain.handle(
     IPC_CHANNELS.projects.create,
     async (_e, data: { name: string; directoryPath: string; yoloDefault?: boolean }): Promise<Project> => {
       log.debug("IPC: projects:create", data);
-      return {
+      return store.saveProject({
         id: crypto.randomUUID(),
         name: data.name,
         directoryPath: data.directoryPath,
         yoloDefault: data.yoloDefault ?? false,
         createdAt: new Date().toISOString(),
-      };
+      });
     }
   );
 
   ipcMain.handle(IPC_CHANNELS.projects.remove, async (_e, id: string): Promise<void> => {
     log.debug("IPC: projects:remove", id);
+    store.removeProject(id);
   });
 
-  ipcMain.handle(IPC_CHANNELS.projects.update, async (_e, id: string, data: unknown): Promise<void> => {
+  ipcMain.handle(IPC_CHANNELS.projects.update, async (_e, id: string, data: Partial<Pick<Project, "name" | "yoloDefault">>): Promise<void> => {
     log.debug("IPC: projects:update", id, data);
+    const project = store.getProject(id);
+    if (!project) throw new Error(`Project ${id} not found`);
+    store.saveProject({ ...project, ...data });
   });
 
   // --- Sessions ---

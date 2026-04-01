@@ -26,6 +26,7 @@ export const ProjectSidebar: React.FC<ProjectSidebarProps> = ({
     selectProject,
     selectSession,
     toggleExpanded,
+    updateProject,
     removeProject,
     removeSession,
   } = useAppStore();
@@ -115,6 +116,18 @@ export const ProjectSidebar: React.FC<ProjectSidebarProps> = ({
                   if (!isExpanded) toggleExpanded(project.id);
                 }}
                 contextMenuItems={[
+                    {
+                      label: 'Rename Project',
+                      onClick: () => {
+                        const newName = window.prompt('Enter new project name:', project.name);
+                        if (newName && newName !== project.name) {
+                          window.kleiber.projects
+                            .update(project.id, { name: newName })
+                            .then(() => updateProject({ ...project, name: newName }))
+                            .catch((err: any) => window.alert('Failed to rename project: ' + (err.message || err)));
+                        }
+                      },
+                    },
                   {
                     label: 'New Session',
                     onClick: () => onNewSession?.(project.id),

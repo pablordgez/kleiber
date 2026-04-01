@@ -19,6 +19,23 @@ function stripQuery(url: string): string {
   return queryIndex === -1 ? url : url.slice(0, queryIndex);
 }
 
+function matchesPublicPath(requestPath: string, publicPathPattern: string): boolean {
+  const requestSegments = requestPath.split("/").filter(Boolean);
+  const patternSegments = publicPathPattern.split("/").filter(Boolean);
+
+  if (requestSegments.length !== patternSegments.length) {
+    return false;
+  }
+
+  return patternSegments.every((segment, index) => {
+    if (segment.startsWith(":")) {
+      return requestSegments[index] !== undefined;
+    }
+
+    return requestSegments[index] === segment;
+  });
+}
+
 async function replyUnauthorized(reply: FastifyReply): Promise<FastifyReply> {
   return reply
     .code(401)
@@ -32,11 +49,12 @@ export function createAuthPreHandler(options: {
   getCredentials: () => RemoteApiCredentials | null;
   now?: () => number;
 }): preHandlerHookHandler {
-  const publicPaths = new Set(options.publicPaths ?? ["/auth"]);
+  const publicPaths = options.publicPaths ?? ["/auth"];
   const now = options.now ?? (() => Date.now());
 
   return async (request, reply) => {
-    if (publicPaths.has(stripQuery(request.url))) {
+    const requestPath = stripQuery(request.url);
+    if (publicPaths.some((publicPath) => matchesPublicPath(requestPath, publicPath))) {
       return;
     }
 

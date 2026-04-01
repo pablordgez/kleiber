@@ -7,6 +7,7 @@ import type { AgentCli, AgentPackConfig, AppSettings, Project, Session, SessionT
 import { McpOrchestrator, createMcpSocketBridgeServer } from "../mcp";
 import type { ParentToWrapperResponse, WrapperToParentRequest } from "../mcp";
 import { RemoteApiServerController } from "../api/server";
+import type { RemoteApiPackManager, RemoteApiStore } from "../api/types";
 import { SessionManager, type McpLaunchConfig } from "../sessions/session-manager";
 import { AgentPackManager } from "../pack/agent-pack-manager";
 import { resolveHarnessAdapter } from "../pack/harness-adapter";
@@ -15,7 +16,6 @@ import { PersistenceStore } from "../store";
 
 const store = new PersistenceStore();
 const agentPackManager = new AgentPackManager();
-const remoteApiServer = new RemoteApiServerController({ store });
 
 const DEFAULT_PACK_CONFIG: AgentPackConfig = {
   version: 1,
@@ -121,6 +121,17 @@ const mcpOrchestrator = new McpOrchestrator({
   store,
   packManager: agentPackManager,
   defaultPackConfig: DEFAULT_PACK_CONFIG,
+});
+
+const remoteApiServer = new RemoteApiServerController({
+  store,
+  packManager: agentPackManager,
+  sessionManager,
+  createSessionResolver: resolveSessionCreateOptions,
+  mcpRuntime: {
+    wrapperCommand: process.execPath,
+    wrapperArgs: [mcpWrapperScriptPath],
+  },
 });
 
 sessionManager.on("session-output", (payload) => {
@@ -278,8 +289,8 @@ function addRoleLaunchArgs(
 export async function resolveSessionCreateOptions(
   payload: CreateSessionIpcPayload,
   options: {
-    storeInstance: Pick<PersistenceStore, "getProject">;
-    packManager: Pick<AgentPackManager, "readProjectConfig">;
+    storeInstance: Pick<RemoteApiStore, "getProject">;
+    packManager: Pick<RemoteApiPackManager, "readProjectConfig">;
     mcpRuntime?: {
       wrapperCommand: string;
       wrapperArgs: string[];

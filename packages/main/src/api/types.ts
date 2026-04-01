@@ -1,4 +1,12 @@
-import type { AgentCli, AppSettings, Project, RemoteApiCredentials, SessionType, UUID } from "@kleiber/shared";
+import type {
+  AgentCli,
+  AgentPackConfig,
+  AppSettings,
+  Project,
+  RemoteApiCredentials,
+  SessionType,
+  UUID,
+} from "@kleiber/shared";
 import type { McpLaunchConfig, ManagedSessionRecord, SessionManagerEvents } from "../sessions/session-manager";
 
 export interface RemoteApiStore {
@@ -10,7 +18,7 @@ export interface RemoteApiStore {
 }
 
 export interface RemoteApiPackManager {
-  readProjectConfig(projectRoot?: string): Promise<unknown>;
+  readProjectConfig(projectRoot?: string): Promise<AgentPackConfig | null>;
 }
 
 export interface RemoteApiSessionManager {

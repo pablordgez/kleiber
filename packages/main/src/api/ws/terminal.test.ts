@@ -160,6 +160,7 @@ async function startApp(overrides: {
   credentials?: RemoteApiCredentials | null;
   sessions?: Record<string, unknown>[];
   bufferedOutput?: Record<string, string[]>;
+  now?: () => number;
   websocket?: {
     authTimeoutMs?: number;
     maxConnectionsPerUser?: number;
@@ -174,6 +175,7 @@ async function startApp(overrides: {
     sessionManager: dependencies.sessionManager as any,
     createSessionResolver: dependencies.createSessionResolver,
     signingKey,
+    now: overrides.now,
     websocket: overrides.websocket,
   });
   const address = await app.listen({ host: "127.0.0.1", port: 0 });
@@ -389,6 +391,53 @@ describe("terminal websocket routes", () => {
     await expect(waitForClose(socket)).resolves.toEqual({
       code: 4401,
       reason: "Authentication timeout",
+    });
+  });
+
+  it("rejects sockets whose first message carries an invalid token", async () => {
+    const runtime = await startApp();
+    openApps.add(runtime.app);
+
+    const socket = new WebSocket(`${runtime.wsBaseUrl}/ws/sessions/session-1/output`);
+    openSockets.add(socket);
+    await waitForOpen(socket);
+
+    const closed = waitForClose(socket);
+    socket.send(JSON.stringify({ token: "not-a-valid-token" }));
+
+    await expect(closed).resolves.toEqual({
+      code: 4401,
+      reason: "Invalid token",
+    });
+  });
+
+  it("rejects sockets whose first message carries an expired token", async () => {
+    const issuedAt = Date.parse("2026-04-02T10:00:00.000Z");
+    const credentials: RemoteApiCredentials = {
+      username: "kleiber",
+      passwordHash: await bcrypt.hash("swordfish", 4),
+    };
+    const runtime = await startApp({
+      credentials,
+      now: () => issuedAt + (24 * 60 * 60 * 1000) + 1_000,
+    });
+    openApps.add(runtime.app);
+
+    const expiredToken = issueAuthToken(
+      "kleiber",
+      runtime.signingKey,
+      () => issuedAt,
+    ).token;
+    const socket = new WebSocket(`${runtime.wsBaseUrl}/ws/sessions/session-1/input`);
+    openSockets.add(socket);
+    await waitForOpen(socket);
+
+    const closed = waitForClose(socket);
+    socket.send(JSON.stringify({ token: expiredToken }));
+
+    await expect(closed).resolves.toEqual({
+      code: 4401,
+      reason: "Invalid token",
     });
   });
 

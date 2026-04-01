@@ -294,6 +294,90 @@ describe("remote API server", () => {
     expect(limited.statusCode).toBe(429);
   });
 
+  it("rejects expired bearer tokens on protected routes", async () => {
+    const credentials: RemoteApiCredentials = {
+      username: "kleiber",
+      passwordHash: await bcrypt.hash("swordfish", 12),
+    };
+    const issuedAt = Date.parse("2026-04-02T10:00:00.000Z");
+    const dependencies = buildDependencies({ credentials });
+
+    const app = await buildRemoteApiApp({
+      store: dependencies.store,
+      packManager: dependencies.packManager,
+      sessionManager: dependencies.sessionManager as any,
+      createSessionResolver: dependencies.createSessionResolver,
+      signingKey: Buffer.from("fedcba9876543210fedcba9876543210", "utf8"),
+      now: () => issuedAt,
+    });
+    openApps.add(app);
+
+    const { token } = await app.inject({
+      method: "POST",
+      url: "/auth",
+      payload: {
+        username: "kleiber",
+        password: "swordfish",
+      },
+    }).then((response) => response.json() as { token: string });
+
+    const expiredStatus = await app.inject({
+      method: "GET",
+      url: "/status",
+      headers: {
+        authorization: `Bearer ${token}`,
+      },
+    });
+    expect(expiredStatus.statusCode).toBe(200);
+
+    const appAfterExpiry = await buildRemoteApiApp({
+      store: dependencies.store,
+      packManager: dependencies.packManager,
+      sessionManager: dependencies.sessionManager as any,
+      createSessionResolver: dependencies.createSessionResolver,
+      signingKey: Buffer.from("fedcba9876543210fedcba9876543210", "utf8"),
+      now: () => issuedAt + (24 * 60 * 60 * 1000) + 1_000,
+    });
+    openApps.add(appAfterExpiry);
+
+    const expiredResponse = await appAfterExpiry.inject({
+      method: "GET",
+      url: "/status",
+      headers: {
+        authorization: `Bearer ${token}`,
+      },
+    });
+    expect(expiredResponse.statusCode).toBe(401);
+    expect(expiredResponse.json()).toEqual({
+      error: "Authentication required.",
+    });
+  });
+
+  it("rejects malformed bearer tokens on protected routes", async () => {
+    const dependencies = buildDependencies();
+    const app = await buildRemoteApiApp({
+      store: dependencies.store,
+      packManager: dependencies.packManager,
+      sessionManager: dependencies.sessionManager as any,
+      createSessionResolver: dependencies.createSessionResolver,
+      signingKey: Buffer.from("00112233445566778899aabbccddeeff", "utf8"),
+    });
+    openApps.add(app);
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/projects",
+      headers: {
+        authorization: "Bearer definitely-not-a-jwt",
+      },
+    });
+
+    expect(response.statusCode).toBe(401);
+    expect(response.json()).toEqual({
+      error: "Authentication required.",
+    });
+  });
+
   it("finds the next available port when the requested port is occupied", async () => {
     const blocker = createServer();
     await new Promise<void>((resolve) => blocker.listen(0, "127.0.0.1", () => resolve()));

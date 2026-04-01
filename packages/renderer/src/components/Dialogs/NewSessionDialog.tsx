@@ -67,6 +67,7 @@ export const NewSessionDialog: React.FC<NewSessionDialogProps> = ({
     if (!open) return;
 
     let cancelled = false;
+    setYolo(projectYoloDefault);
     setIsLoadingRoles(true);
 
     Promise.all([window.kleiber.pack.roles(), window.kleiber.pack.status()])
@@ -90,7 +91,18 @@ export const NewSessionDialog: React.FC<NewSessionDialogProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [open]);
+  }, [open, projectYoloDefault]);
+
+  useEffect(() => {
+    if (!projectYoloDefault) {
+      setYolo(false);
+      return;
+    }
+
+    if (open) {
+      setYolo((current) => current || projectYoloDefault);
+    }
+  }, [open, projectYoloDefault]);
 
   useEffect(() => {
     if (role !== 'plain' && !roles.includes(role)) {
@@ -229,6 +241,7 @@ export const NewSessionDialog: React.FC<NewSessionDialogProps> = ({
                 checked={yolo}
                 onChange={(event) => setYolo(event.target.checked)}
                 disabled={yoloDisabled}
+                aria-disabled={yoloDisabled}
                 className="h-4 w-4 rounded border-[#3F3F46] bg-[#09090B] disabled:opacity-50"
               />
               <label
@@ -238,6 +251,11 @@ export const NewSessionDialog: React.FC<NewSessionDialogProps> = ({
                 Enable YOLO mode
               </label>
             </div>
+            {yoloDisabled && !projectYoloDefault && (
+              <p className="text-xs text-[#A1A1AA] -mt-2">
+                This project has YOLO disabled by default, so new sessions start with YOLO off.
+              </p>
+            )}
 
             <div className="flex justify-end gap-3 mt-4">
               <Dialog.Close asChild>

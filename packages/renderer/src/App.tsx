@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { AppSettings, Session, UUID } from '@kleiber/shared';
 import { useAppStore } from './store/useAppStore';
 import { ProjectSidebar } from './components/Sidebar/ProjectSidebar';
+import { AgentPackBanner } from './components/AgentPackBanner';
 import { ProjectOverview } from './components/ProjectOverview';
 import { SessionHeader } from './components/Terminal/SessionHeader';
 import { TerminalPane } from './components/Terminal/TerminalPane';
@@ -20,6 +21,7 @@ export const App: React.FC = () => {
     loadProjects,
     setSessions,
     selectSession,
+    updateProject,
     updateSession,
   } = useAppStore();
 
@@ -110,6 +112,15 @@ export const App: React.FC = () => {
     setIsNewSessionOpen(true);
   };
 
+  const handleProjectYoloChange = async (nextValue: boolean) => {
+    if (!selectedProject) {
+      return;
+    }
+
+    await window.kleiber.projects.update(selectedProject.id, { yoloDefault: nextValue });
+    updateProject({ ...selectedProject, yoloDefault: nextValue });
+  };
+
   const activeProjectForDialog =
     newSessionProjectId != null
       ? (projects.find((p) => p.id === newSessionProjectId) ?? selectedProject)
@@ -127,6 +138,8 @@ export const App: React.FC = () => {
       />
 
       <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
+        <AgentPackBanner />
+
         {selectedProject && projectSessions.length > 0 && (
           <div className="h-[36px] shrink-0 border-b border-[#3F3F46] bg-[#18181B] px-2 flex items-center gap-1 overflow-x-auto">
             <button
@@ -190,6 +203,7 @@ export const App: React.FC = () => {
             sessions={sessions}
             onNewSession={() => handleNewSession(selectedProject.id)}
             onSelectSession={selectSession}
+            onProjectYoloChange={handleProjectYoloChange}
           />
         ) : null}
       </main>

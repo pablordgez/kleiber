@@ -3,6 +3,10 @@ import { Project, Session, UUID } from '@kleiber/shared';
 import { Terminal, Play, XCircle, AlertCircle, Circle } from 'lucide-react';
 import { cn } from '../lib/utils';
 
+function getSessionDisplayName(session: Session): string {
+  return (session as Session & { name?: string }).name ?? session.id.substring(0, 8);
+}
+
 export interface ProjectOverviewProps {
   project: Project;
   sessions: Session[];
@@ -88,9 +92,7 @@ export const ProjectOverview: React.FC<ProjectOverviewProps> = ({
                 >
                   <div className="flex items-center gap-3">
                     {getStatusIcon(session.state)}
-                    <span className="font-medium text-sm">
-                      {session.id.substring(0, 8)}
-                    </span>
+                    <span className="font-medium text-sm">{getSessionDisplayName(session)}</span>
                     {session.cli && (
                       <span className="px-2 py-0.5 text-xs bg-[#27272A] border border-[#3F3F46] rounded text-[#A1A1AA]">
                         {session.cli}
@@ -108,7 +110,7 @@ export const ProjectOverview: React.FC<ProjectOverviewProps> = ({
                         YOLO
                       </span>
                     )}
-                    <span className="font-mono text-xs">{session.id.substring(0, 8)}</span>
+                    <span className="font-mono text-xs">{session.state}</span>
                   </div>
                 </div>
               ))}

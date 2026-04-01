@@ -2,14 +2,18 @@ import React, { useState } from 'react';
 import { Plus, Settings } from 'lucide-react';
 import { useAppStore } from '../../store/useAppStore';
 import { SidebarItem } from './SidebarItem';
-import { UUID } from '@kleiber/shared';
+import { Session, UUID } from '@kleiber/shared';
 import { StatusBar } from '../StatusBar';
 import { NewProjectDialog } from '../Dialogs/NewProjectDialog';
+
+function getSessionDisplayName(session: Session): string {
+  return (session as Session & { name?: string }).name ?? session.id.substring(0, 8);
+}
 
 export interface ProjectSidebarProps {
   remoteApiEnabled: boolean;
   remoteApiPort: number | null;
-  onNewSession?: (projectId: UUID) => void;
+  onNewSession?: (projectId: UUID, parentSessionId?: UUID) => void;
 }
 
 export const ProjectSidebar: React.FC<ProjectSidebarProps> = ({
@@ -28,7 +32,6 @@ export const ProjectSidebar: React.FC<ProjectSidebarProps> = ({
     toggleExpanded,
     updateProject,
     removeProject,
-    removeSession,
   } = useAppStore();
 
   const [isNewProjectOpen, setIsNewProjectOpen] = useState(false);
@@ -48,7 +51,7 @@ export const ProjectSidebar: React.FC<ProjectSidebarProps> = ({
         <React.Fragment key={session.id}>
           <SidebarItem
             level={level}
-            label={session.id.substring(0, 8)}
+            label={getSessionDisplayName(session)}
             isActive={isActive}
             isExpanded={isExpanded}
             hasChildren={hasChildren}
@@ -59,7 +62,7 @@ export const ProjectSidebar: React.FC<ProjectSidebarProps> = ({
             contextMenuItems={[
               {
                 label: 'New Sub-Session',
-                onClick: () => onNewSession?.(projectId),
+                onClick: () => onNewSession?.(projectId, session.id),
               },
               {
                 label: 'Kill Session',
@@ -67,7 +70,6 @@ export const ProjectSidebar: React.FC<ProjectSidebarProps> = ({
                 onClick: () =>
                   window.kleiber.sessions
                     .kill(session.id)
-                    .then(() => removeSession(session.id))
                     .catch((err: unknown) => console.error('Failed to kill session', err)),
               },
             ]}

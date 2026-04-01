@@ -8,6 +8,7 @@
     "dev": "electron-vite dev",
     "build": "corepack pnpm run build:desktop && corepack pnpm --filter @kleiber/web build",
     "build:desktop": "electron-vite build",
+    "build:package": "electron-builder --config electron-builder.yml",
     "clean": "rimraf dist packages/*/dist",
     "lint": "corepack pnpm -r lint",
     "typecheck": "tsc -b"
@@ -20,6 +21,7 @@
     "@types/react-dom": "^18.3.7",
     "@vitejs/plugin-react": "^5.0.0",
     "electron": "^34.5.8",
+    "electron-builder": "^25.1.8",
     "electron-vite": "^5.0.0",
     "eslint": "^9.23.0",
     "rimraf": "^6.0.1",

@@ -12,12 +12,14 @@
   },
   "dependencies": {
     "@fastify/rate-limit": "^10.3.0",
+    "@fastify/websocket": "^11.2.0",
     "@kleiber/shared": "workspace:*",
     "bcryptjs": "^3.0.3",
     "electron-log": "^5.4.3",
     "electron-store": "^10.1.0",
     "fastify": "^5.8.4",
     "node-pty": "^1.1.0",
+    "ws": "^8.20.0",
     "yaml": "^2.8.1"
   }
 }

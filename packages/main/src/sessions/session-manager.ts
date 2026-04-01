@@ -267,6 +267,17 @@ export class SessionManager extends EventEmitter {
     session.pty.resize(options.columns, options.rows);
   }
 
+
+  renameSession(sessionId: UUID, name: string): void {
+    const session = this.#requireSession(sessionId);
+    const previousState = session.state;
+    session.name = name;
+    this.emit("session-updated", {
+      session: this.#snapshot(session),
+      previousState,
+    });
+  }
+
   killSession(sessionId: UUID): UUID[] {
     this.#requireSession(sessionId);
     const killedSessionIds = this.#cascadeKill(sessionId);

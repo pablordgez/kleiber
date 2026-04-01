@@ -1,8 +1,8 @@
 import { createServer } from "node:net";
 
 import bcrypt from "bcryptjs";
-import type { AppSettings, RemoteApiCredentials } from "@kleiber/shared";
-import { afterEach, describe, expect, it } from "vitest";
+import type { AppSettings, Project, RemoteApiCredentials } from "@kleiber/shared";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { buildRemoteApiApp, findAvailablePort, RemoteApiServerController } from "./server";
 
@@ -14,6 +14,134 @@ function buildSettings(overrides: Partial<AppSettings> = {}): AppSettings {
     theme: "dark",
     quickLaunchShortcut: "CmdOrCtrl+K",
     ...overrides,
+  };
+}
+
+function buildProject(overrides: Partial<Project> = {}): Project {
+  return {
+    id: "project-1",
+    name: "Project 1",
+    directoryPath: "/tmp/project-1",
+    yoloDefault: false,
+    createdAt: new Date().toISOString(),
+    ...overrides,
+  };
+}
+
+function buildSession(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: "session-1",
+    name: "Session 1",
+    projectId: "project-1",
+    parentSessionId: null,
+    type: "plain",
+    cli: null,
+    role: null,
+    yolo: false,
+    state: "running",
+    exitCode: null,
+    pid: 101,
+    outputBuffer: [],
+    mcpEnabled: false,
+    mcpWrapperId: null,
+    childSessionIds: [],
+    signal: null,
+    ...overrides,
+  };
+}
+
+function buildDependencies(overrides: {
+  credentials?: RemoteApiCredentials | null;
+  projects?: Project[];
+  sessions?: Record<string, unknown>[];
+} = {}) {
+  const projects = overrides.projects ?? [buildProject()];
+  const projectMap = new Map(projects.map((project) => [project.id, project]));
+  const sessions = overrides.sessions ?? [buildSession()];
+  const credentials = overrides.credentials ?? null;
+
+  const store = {
+    listProjects: vi.fn(() => projects),
+    getProject: vi.fn((projectId: string) => projectMap.get(projectId)),
+    getSettings: vi.fn(() => buildSettings()),
+    setSettings: vi.fn((settings: AppSettings) => settings),
+    getRemoteApiCredentials: vi.fn(() => credentials),
+  };
+
+  const sessionManager = {
+    createSession: vi.fn(async (input: Record<string, unknown>) =>
+      buildSession({
+        id: "session-created",
+        projectId: input.projectId,
+        parentSessionId: input.parentSessionId ?? null,
+        name: input.name ?? "Created Session",
+        type: input.type ?? "plain",
+        cli: input.cli ?? null,
+        role: input.role ?? null,
+        yolo: input.requestedYolo ?? false,
+      }),
+    ),
+    getSession: vi.fn((sessionId: string) =>
+      sessions.find((session) => session.id === sessionId),
+    ),
+    listSessions: vi.fn((projectId: string) =>
+      sessions.filter((session) => session.projectId === projectId),
+    ),
+    readSession: vi.fn(() => []),
+    sendToSession: vi.fn(),
+    on: vi.fn(),
+    removeListener: vi.fn(),
+  };
+
+  const packManager = {
+    readProjectConfig: vi.fn(async () => null),
+  };
+
+  const createSessionResolver = vi.fn(
+    async (
+      payload: {
+        projectId: string;
+        parentSessionId?: string | null;
+        name: string;
+        type?: string;
+        cli?: string;
+        role?: string;
+        yolo?: boolean;
+        workingDirectory?: string;
+        mcpEnabled?: boolean;
+      },
+      _options: unknown,
+    ) => {
+      const project = projectMap.get(payload.projectId);
+      if (!project) {
+        throw new Error(`Project ${payload.projectId} not found.`);
+      }
+
+      return {
+        project,
+        createSessionInput: {
+          projectId: payload.projectId,
+          parentSessionId: payload.parentSessionId ?? null,
+          type: payload.type === "agent" || payload.type === "agent_role" ? payload.type : "plain",
+          cli: payload.cli ?? null,
+          role: payload.role ?? null,
+          requestedYolo: payload.yolo,
+          defaultYolo: project.yoloDefault,
+          name: payload.name,
+          workingDirectory: payload.workingDirectory ?? project.directoryPath,
+          mcpEnabled: payload.mcpEnabled ?? false,
+        },
+      };
+    },
+  );
+
+  return {
+    store,
+    sessionManager,
+    packManager,
+    createSessionResolver,
+    projects,
+    sessions,
   };
 }
 
@@ -29,14 +157,18 @@ afterEach(async () => {
 });
 
 describe("remote API server", () => {
-  it("requires auth, issues bearer tokens, and accepts HTTP Basic auth", async () => {
+  it("requires auth, issues bearer tokens, accepts basic auth, and serves REST routes", async () => {
     const credentials: RemoteApiCredentials = {
       username: "kleiber",
       passwordHash: await bcrypt.hash("swordfish", 12),
     };
+    const dependencies = buildDependencies({ credentials });
 
     const app = await buildRemoteApiApp({
-      getCredentials: () => credentials,
+      store: dependencies.store,
+      packManager: dependencies.packManager,
+      sessionManager: dependencies.sessionManager as any,
+      createSessionResolver: dependencies.createSessionResolver,
       signingKey: Buffer.from("0123456789abcdef0123456789abcdef", "utf8"),
     });
     openApps.add(app);
@@ -61,12 +193,14 @@ describe("remote API server", () => {
     expect(authBody.token).toContain(".");
     expect(authBody.expiresAt).toMatch(/Z$/u);
 
+    const bearerHeaders = {
+      authorization: `Bearer ${authBody.token}`,
+    };
+
     const bearerStatus = await app.inject({
       method: "GET",
       url: "/status",
-      headers: {
-        authorization: `Bearer ${authBody.token}`,
-      },
+      headers: bearerHeaders,
     });
     expect(bearerStatus.statusCode).toBe(200);
     expect(bearerStatus.json()).toEqual({
@@ -75,19 +209,48 @@ describe("remote API server", () => {
       authMode: "bearer",
     });
 
-    const basicStatus = await app.inject({
+    const basicProjects = await app.inject({
       method: "GET",
-      url: "/status",
+      url: "/projects",
       headers: {
         authorization: `Basic ${Buffer.from("kleiber:swordfish").toString("base64")}`,
       },
     });
-    expect(basicStatus.statusCode).toBe(200);
-    expect(basicStatus.json()).toEqual({
-      ok: true,
-      username: "kleiber",
-      authMode: "basic",
+    expect(basicProjects.statusCode).toBe(200);
+    expect(basicProjects.json()).toEqual(dependencies.projects);
+
+    const sessionsResponse = await app.inject({
+      method: "GET",
+      url: "/projects/project-1/sessions",
+      headers: bearerHeaders,
     });
+    expect(sessionsResponse.statusCode).toBe(200);
+    expect(sessionsResponse.json()).toEqual(dependencies.sessions);
+
+    const createResponse = await app.inject({
+      method: "POST",
+      url: "/projects/project-1/sessions",
+      headers: bearerHeaders,
+      payload: {
+        name: "Created Session",
+        type: "plain",
+        workingDirectory: "/tmp/project-1",
+      },
+    });
+    expect(createResponse.statusCode).toBe(201);
+    expect(dependencies.createSessionResolver).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: "project-1",
+        name: "Created Session",
+      }),
+      expect.anything(),
+    );
+    expect(dependencies.sessionManager.createSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: "project-1",
+        name: "Created Session",
+      }),
+    );
   });
 
   it("rate limits repeated auth requests from the same IP", async () => {
@@ -95,9 +258,13 @@ describe("remote API server", () => {
       username: "kleiber",
       passwordHash: await bcrypt.hash("swordfish", 12),
     };
+    const dependencies = buildDependencies({ credentials });
 
     const app = await buildRemoteApiApp({
-      getCredentials: () => credentials,
+      store: dependencies.store,
+      packManager: dependencies.packManager,
+      sessionManager: dependencies.sessionManager as any,
+      createSessionResolver: dependencies.createSessionResolver,
       signingKey: Buffer.from("abcdef0123456789abcdef0123456789", "utf8"),
     });
     openApps.add(app);
@@ -156,15 +323,19 @@ describe("remote API server", () => {
         remoteApiPort: occupiedPort,
       });
 
+      const dependencies = buildDependencies({ credentials });
       const controller = new RemoteApiServerController({
         store: {
+          ...dependencies.store,
           getSettings: () => persistedSettings,
           setSettings: (settings) => {
             persistedSettings = settings;
             return settings;
           },
-          getRemoteApiCredentials: () => credentials,
         },
+        packManager: dependencies.packManager,
+        sessionManager: dependencies.sessionManager as any,
+        createSessionResolver: dependencies.createSessionResolver,
       });
 
       const updatedSettings = await controller.applySettings(persistedSettings);

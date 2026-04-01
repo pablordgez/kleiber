@@ -379,6 +379,46 @@ describe("IPC handlers remediation", () => {
     expect(createInput.mcpLaunchConfig.envTemplate.OPENCODE_CONFIG_CONTENT).toContain("{mcpSocketPath}");
   });
 
+  it("allows MCP to be disabled per session even when the harness supports it", async () => {
+    const { registerIpcHandlers } = await import("./handlers.js");
+    registerIpcHandlers();
+
+    const projectDir = await mkdtemp(path.join(os.tmpdir(), "kleiber-mcp-disabled-"));
+    mockState.projects.set("project-mcp-off", {
+      id: "project-mcp-off",
+      name: "Project MCP Off",
+      directoryPath: projectDir,
+      yoloDefault: false,
+      createdAt: new Date().toISOString(),
+    });
+
+    mockState.readProjectConfigMock.mockResolvedValue(
+      buildPackConfig({
+        harness_adapters: {
+          claude_code: {
+            enabled: true,
+            orchestration: "native_subagents_or_agent_teams",
+            launch_command: "claude",
+            mcp_injection: "env",
+          },
+        },
+      }),
+    );
+
+    const handler = mockState.registeredHandlers.get(IPC_CHANNELS.sessions.create);
+    await handler?.({}, {
+      projectId: "project-mcp-off",
+      name: "No MCP Session",
+      type: "agent",
+      cli: "claude",
+      mcpEnabled: false,
+    });
+
+    const createInput = mockState.createSessionMock.mock.calls.at(-1)?.[0] as Record<string, any>;
+    expect(createInput.mcpEnabled).toBe(false);
+    expect(createInput.mcpLaunchConfig).toBeNull();
+  });
+
   it("rejects agent session creation when the CLI is disabled in project config", async () => {
     const { registerIpcHandlers } = await import("./handlers.js");
     registerIpcHandlers();

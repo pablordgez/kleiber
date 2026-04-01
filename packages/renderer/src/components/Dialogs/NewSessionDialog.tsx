@@ -51,6 +51,7 @@ export const NewSessionDialog: React.FC<NewSessionDialogProps> = ({
   const [role, setRole] = useState<string>('plain');
   const [yolo, setYolo] = useState(projectYoloDefault);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const addSession = useAppStore((state) => state.addSession);
 
   const isPlain = cli === 'plain' && role === 'plain';
@@ -61,6 +62,7 @@ export const NewSessionDialog: React.FC<NewSessionDialogProps> = ({
     if (!name) return;
 
     setIsSubmitting(true);
+    setError(null);
     try {
       const type: SessionType =
         role !== 'plain' ? 'agent_role' : cli !== 'plain' ? 'agent' : 'plain';
@@ -92,8 +94,9 @@ export const NewSessionDialog: React.FC<NewSessionDialogProps> = ({
       setCli('plain');
       setRole('plain');
       setYolo(projectYoloDefault);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to create session', err);
+      setError(err.message || 'Failed to create session');
     } finally {
       setIsSubmitting(false);
     }
@@ -114,6 +117,7 @@ export const NewSessionDialog: React.FC<NewSessionDialogProps> = ({
           </div>
 
           <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+            {error && <div className="text-red-500 text-sm bg-red-500/10 p-2 rounded">{error}</div>}
             <div className="flex flex-col gap-2">
               <label htmlFor="session-name" className="text-sm font-medium text-[#FAFAFA]">
                 Name

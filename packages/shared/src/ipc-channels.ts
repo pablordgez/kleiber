@@ -12,6 +12,7 @@ export const IPC_CHANNELS = {
     send: "sessions:send",
     read: "sessions:read",
     kill: "sessions:kill",
+    updated: "sessions:updated",
   },
   settings: {
     get: "settings:get",

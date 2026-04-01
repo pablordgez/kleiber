@@ -1,21 +1,42 @@
-:root {
-  font-family: Inter, system-ui, sans-serif;
-  color: #111827;
-  background: #f9fafb;
-}
+@import "tailwindcss";
+@import "@fontsource/inter";
 
-* {
-  box-sizing: border-box;
-}
+@config "../tailwind.config.ts";
 
-body {
-  margin: 0;
-}
+@layer base {
+  * {
+    border-color: #1C1C1C;
+  }
 
-.web-shell {
-  min-height: 100vh;
-  display: grid;
-  place-content: center;
-  gap: 0.5rem;
-  text-align: center;
+  html {
+    color-scheme: dark;
+  }
+
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: #000000;
+    color: #FFFFFF;
+    font-family: Inter, -apple-system, BlinkMacSystemFont, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: #1C1C1C;
+    border-radius: 3px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: #333333;
+  }
 }

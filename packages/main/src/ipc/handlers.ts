@@ -1,11 +1,10 @@
-import { fork } from "node:child_process";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { ipcMain, BrowserWindow } from "electron";
 import { IPC_CHANNELS, SUPPORTED_AGENT_CLIS } from "@kleiber/shared";
 import log from "electron-log";
 import type { AgentCli, AgentPackConfig, Project, Session, SessionType } from "@kleiber/shared";
-import { McpOrchestrator } from "../mcp";
+import { McpOrchestrator, createMcpSocketBridgeServer } from "../mcp";
 import type { ParentToWrapperResponse, WrapperToParentRequest } from "../mcp";
 import { SessionManager, type McpLaunchConfig } from "../sessions/session-manager";
 import { AgentPackManager } from "../pack/agent-pack-manager";
@@ -35,7 +34,7 @@ const DEFAULT_PACK_CONFIG: AgentPackConfig = {
       enabled: true,
       orchestration: "native_subagents",
       launch_command: "codex",
-      mcp_injection: "unknown",
+      mcp_injection: "argv",
     },
     claude_code: {
       enabled: true,
@@ -47,7 +46,7 @@ const DEFAULT_PACK_CONFIG: AgentPackConfig = {
       enabled: true,
       orchestration: "plugin_or_manual",
       launch_command: "opencode",
-      mcp_injection: "unknown",
+      mcp_injection: "env",
     },
     gemini_cli: {
       enabled: true,
@@ -60,61 +59,59 @@ const DEFAULT_PACK_CONFIG: AgentPackConfig = {
     available: ["kleiber-local"],
     notes: [],
   },
-  agent_overrides: {},
+  agent_overrides: {
+    codex: {
+      mcp_args_template: [
+        "-c",
+        "mcp_servers.kleiber.command={wrapperCommandJson}",
+        "-c",
+        "mcp_servers.kleiber.args={wrapperArgsJson}",
+        "-c",
+        "mcp_servers.kleiber.env.KLEIBER_SESSION_ID={sessionId}",
+        "-c",
+        "mcp_servers.kleiber.env.KLEIBER_PROJECT_ID={projectId}",
+        "-c",
+        "mcp_servers.kleiber.env.KLEIBER_MCP_SOCKET_PATH={mcpSocketPath}",
+      ],
+    },
+    opencode: {
+      mcp_env_template: {
+        OPENCODE_CONFIG_CONTENT:
+          '{"$schema":"https://opencode.ai/config.json","mcp":{"kleiber":{"type":"local","enabled":true,"command":{wrapperCommandAndArgsJson},"environment":{"KLEIBER_SESSION_ID":"{sessionId}","KLEIBER_PROJECT_ID":"{projectId}","KLEIBER_MCP_SOCKET_PATH":"{mcpSocketPath}"}}}}',
+      },
+    },
+  },
 };
 
 const mcpWrapperScriptPath = path.resolve(__dirname, "../mcp/stdio-wrapper.js");
 
 export const sessionManager = new SessionManager({
-  mcpWrapperFactory: ({ sessionId, projectId }) => {
-    const child = fork(mcpWrapperScriptPath, [], {
-      env: {
-        ...process.env,
-        KLEIBER_SESSION_ID: sessionId,
-        KLEIBER_PROJECT_ID: projectId,
-      },
-      stdio: ["pipe", "pipe", "pipe", "ipc"],
-      silent: true,
-    });
-
-    child.on("message", async (message: unknown) => {
-      if (!isWrapperRequest(message)) {
-        return;
-      }
-
-      const response: ParentToWrapperResponse = {
-        kind: "kleiber.mcp.response",
-        requestId: message.requestId,
-        ok: true,
-      };
-
-      try {
-        response.result = await mcpOrchestrator.handleParentRequest({
-          method: message.method,
-          params: message.params,
-          context: message.context,
-        });
-      } catch (error) {
-        response.ok = false;
-        response.error = {
-          message: error instanceof Error ? error.message : String(error),
+  mcpWrapperFactory: ({ sessionId }) =>
+    createMcpSocketBridgeServer({
+      sessionId,
+      onRequest: async (message: WrapperToParentRequest): Promise<ParentToWrapperResponse> => {
+        const response: ParentToWrapperResponse = {
+          kind: "kleiber.mcp.response",
+          requestId: message.requestId,
+          ok: true,
         };
-      }
 
-      if (child.connected) {
-        child.send(response);
-      }
-    });
-
-    return {
-      pid: child.pid ?? -1,
-      dispose: () => {
-        if (child.connected) {
-          child.kill();
+        try {
+          response.result = await mcpOrchestrator.handleParentRequest({
+            method: message.method,
+            params: message.params,
+            context: message.context,
+          });
+        } catch (error) {
+          response.ok = false;
+          response.error = {
+            message: error instanceof Error ? error.message : String(error),
+          };
         }
+
+        return response;
       },
-    };
-  },
+    }),
 });
 
 const mcpOrchestrator = new McpOrchestrator({
@@ -412,15 +409,6 @@ function resolveMcpLaunchConfig(
     ...(argsTemplate ? { argsTemplate } : {}),
     envTemplate,
   };
-}
-
-function isWrapperRequest(message: unknown): message is WrapperToParentRequest {
-  return (
-    !!message &&
-    typeof message === "object" &&
-    (message as WrapperToParentRequest).kind === "kleiber.mcp.request" &&
-    typeof (message as WrapperToParentRequest).requestId === "string"
-  );
 }
 
 export function registerIpcHandlers(): void {

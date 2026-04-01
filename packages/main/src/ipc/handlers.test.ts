@@ -302,6 +302,83 @@ describe("IPC handlers remediation", () => {
     expect(createInput.launch.env).toEqual({ KLEIBER_AGENT_ROLE: "architect" });
   });
 
+  it("builds inline Codex MCP config for agent sessions", async () => {
+    const { registerIpcHandlers } = await import("./handlers.js");
+    registerIpcHandlers();
+
+    const projectDir = await mkdtemp(path.join(os.tmpdir(), "kleiber-codex-mcp-"));
+    mockState.projects.set("project-codex", {
+      id: "project-codex",
+      name: "Project Codex",
+      directoryPath: projectDir,
+      yoloDefault: false,
+      createdAt: new Date().toISOString(),
+    });
+
+    const handler = mockState.registeredHandlers.get(IPC_CHANNELS.sessions.create);
+    await handler?.({}, {
+      projectId: "project-codex",
+      name: "Codex MCP",
+      type: "agent",
+      cli: "codex",
+    });
+
+    const createInput = mockState.createSessionMock.mock.calls.at(-1)?.[0] as Record<string, any>;
+    expect(createInput.cli).toBe("codex");
+    expect(createInput.mcpEnabled).toBe(true);
+    expect(createInput.mcpLaunchConfig).toMatchObject({
+      injectionMethod: "argv",
+      wrapperCommand: process.execPath,
+    });
+    expect(createInput.mcpLaunchConfig.argsTemplate).toEqual([
+      "-c",
+      "mcp_servers.kleiber.command={wrapperCommandJson}",
+      "-c",
+      "mcp_servers.kleiber.args={wrapperArgsJson}",
+      "-c",
+      "mcp_servers.kleiber.env.KLEIBER_SESSION_ID={sessionId}",
+      "-c",
+      "mcp_servers.kleiber.env.KLEIBER_PROJECT_ID={projectId}",
+      "-c",
+      "mcp_servers.kleiber.env.KLEIBER_MCP_SOCKET_PATH={mcpSocketPath}",
+    ]);
+  });
+
+  it("builds inline OpenCode MCP config for agent sessions", async () => {
+    const { registerIpcHandlers } = await import("./handlers.js");
+    registerIpcHandlers();
+
+    const projectDir = await mkdtemp(path.join(os.tmpdir(), "kleiber-opencode-mcp-"));
+    mockState.projects.set("project-opencode", {
+      id: "project-opencode",
+      name: "Project OpenCode",
+      directoryPath: projectDir,
+      yoloDefault: false,
+      createdAt: new Date().toISOString(),
+    });
+
+    const handler = mockState.registeredHandlers.get(IPC_CHANNELS.sessions.create);
+    await handler?.({}, {
+      projectId: "project-opencode",
+      name: "OpenCode MCP",
+      type: "agent",
+      cli: "opencode",
+    });
+
+    const createInput = mockState.createSessionMock.mock.calls.at(-1)?.[0] as Record<string, any>;
+    expect(createInput.cli).toBe("opencode");
+    expect(createInput.mcpEnabled).toBe(true);
+    expect(createInput.mcpLaunchConfig).toMatchObject({
+      injectionMethod: "env",
+      wrapperCommand: process.execPath,
+      envTemplate: {
+        OPENCODE_CONFIG_CONTENT: expect.stringContaining('"type":"local"'),
+      },
+    });
+    expect(createInput.mcpLaunchConfig.envTemplate.OPENCODE_CONFIG_CONTENT).toContain("{wrapperCommandAndArgsJson}");
+    expect(createInput.mcpLaunchConfig.envTemplate.OPENCODE_CONFIG_CONTENT).toContain("{mcpSocketPath}");
+  });
+
   it("rejects agent session creation when the CLI is disabled in project config", async () => {
     const { registerIpcHandlers } = await import("./handlers.js");
     registerIpcHandlers();

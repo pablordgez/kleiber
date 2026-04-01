@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 
 import type { AgentCli, SessionRecord, SessionState, SessionType, UUID } from "@kleiber/shared";
 
+import { resolveMcpSocketPath } from "../mcp/socket-transport";
 import { CircularBuffer } from "./circular-buffer";
 
 const DEFAULT_OUTPUT_BUFFER_SIZE = 1_000;
@@ -92,8 +93,8 @@ export interface SessionManagerOptions {
 }
 
 export interface McpWrapperRuntime {
-  pid: number;
-  dispose(): void;
+  pid: number | null;
+  dispose(): void | Promise<void>;
 }
 
 export type McpWrapperFactory = (context: {
@@ -237,7 +238,7 @@ export class SessionManager extends EventEmitter {
           runtime.mcpWrapperId = wrapperRuntime.pid;
           runtime.cleanup.push({
             dispose: () => {
-              wrapperRuntime.dispose();
+              void wrapperRuntime.dispose();
             },
           });
         }
@@ -585,6 +586,7 @@ function applyMcpLaunchConfig(
     KLEIBER_MCP_TRANSPORT: "stdio",
     KLEIBER_MCP_SESSION_ID: context.sessionId,
     KLEIBER_MCP_PROJECT_ID: context.projectId,
+    KLEIBER_MCP_SOCKET_PATH: resolveMcpSocketPath(context.sessionId),
     KLEIBER_MCP_SERVER_COMMAND: wrapperCommand,
     KLEIBER_MCP_SERVER_ARGS_JSON: JSON.stringify(wrapperArgs),
     ...(config?.envTemplate ? replaceTemplateValues(config.envTemplate, context, wrapperCommand, wrapperArgs) : {}),
@@ -623,10 +625,14 @@ function replaceTemplateValue(
   wrapperCommand: string,
   wrapperArgs: string[],
 ): string {
+  const socketPath = resolveMcpSocketPath(context.sessionId);
   return value
     .replaceAll("{sessionId}", context.sessionId)
     .replaceAll("{projectId}", context.projectId)
+    .replaceAll("{mcpSocketPath}", socketPath)
     .replaceAll("{wrapperCommand}", wrapperCommand)
+    .replaceAll("{wrapperCommandJson}", JSON.stringify(wrapperCommand))
+    .replaceAll("{wrapperCommandAndArgsJson}", JSON.stringify([wrapperCommand, ...wrapperArgs]))
     .replaceAll("{wrapperArgsJson}", JSON.stringify(wrapperArgs));
 }
 

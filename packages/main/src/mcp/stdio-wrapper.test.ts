@@ -2,6 +2,7 @@ import { PassThrough } from "node:stream";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { createMcpSocketBridgeServer } from "./socket-transport";
 import { McpStdioWrapper } from "./stdio-wrapper";
 
 interface ParentRequestEnvelope {
@@ -75,6 +76,7 @@ class ParentBridgeFake {
 
 afterEach(() => {
   vi.useRealTimers();
+  delete process.env.KLEIBER_MCP_SOCKET_PATH;
 });
 
 describe("McpStdioWrapper", () => {
@@ -248,5 +250,61 @@ describe("McpStdioWrapper", () => {
     expect(bridge.send).not.toHaveBeenCalled();
 
     wrapper.stop();
+  });
+
+  it("can proxy over the session socket bridge when no fork IPC is available", async () => {
+    const input = new PassThrough();
+    const output = new PassThrough();
+    let outputData = "";
+    output.on("data", (chunk) => {
+      outputData += String(chunk);
+    });
+
+    const server = await createMcpSocketBridgeServer({
+      sessionId: "session-socket",
+      onRequest: async (message) => ({
+        kind: "kleiber.mcp.response",
+        requestId: message.requestId,
+        ok: true,
+        result:
+          message.method === "initialize"
+            ? {
+                protocolVersion: "2025-03-26",
+                capabilities: { tools: { listChanged: false } },
+                serverInfo: { name: "kleiber-orchestrator", version: "9.9.9" },
+                version: "9.9.9",
+              }
+            : { tools: [] },
+      }),
+    });
+
+    process.env.KLEIBER_MCP_SOCKET_PATH = server.socketPath;
+    const originalSend = process.send;
+    Object.defineProperty(process, "send", {
+      value: undefined,
+      configurable: true,
+      writable: true,
+    });
+    const wrapper = new McpStdioWrapper({
+      streams: { input, output },
+      context: { sessionId: "session-socket", projectId: "project-socket" },
+    });
+    wrapper.start();
+
+    input.write(encodeFrame({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }));
+
+    await vi.waitFor(() => {
+      const frames = extractFrames(outputData) as any[];
+      expect(frames).toHaveLength(1);
+      expect(frames[0]?.result.serverInfo.version).toBe("9.9.9");
+    });
+
+    wrapper.stop();
+    await server.dispose();
+    Object.defineProperty(process, "send", {
+      value: originalSend,
+      configurable: true,
+      writable: true,
+    });
   });
 });

@@ -3,12 +3,15 @@ import path from "node:path";
 import { ipcMain, BrowserWindow } from "electron";
 import { IPC_CHANNELS, SUPPORTED_AGENT_CLIS } from "@kleiber/shared";
 import log from "electron-log";
-import type { AgentCli, AgentPackConfig, Project, Session, SessionType } from "@kleiber/shared";
+import type { AgentCli, AgentPackConfig, AppSettings, Project, Session, SessionType } from "@kleiber/shared";
 import { McpOrchestrator, createMcpSocketBridgeServer } from "../mcp";
 import type { ParentToWrapperResponse, WrapperToParentRequest } from "../mcp";
+import { RemoteApiServerController } from "../api/server";
+import type { RemoteApiPackManager, RemoteApiStore } from "../api/types";
 import { SessionManager, type McpLaunchConfig } from "../sessions/session-manager";
 import { AgentPackManager } from "../pack/agent-pack-manager";
 import { resolveHarnessAdapter } from "../pack/harness-adapter";
+import { notifySessionExitIfUnfocused } from "../notifications";
 
 import { PersistenceStore } from "../store";
 
@@ -121,6 +124,17 @@ const mcpOrchestrator = new McpOrchestrator({
   defaultPackConfig: DEFAULT_PACK_CONFIG,
 });
 
+const remoteApiServer = new RemoteApiServerController({
+  store,
+  packManager: agentPackManager,
+  sessionManager,
+  createSessionResolver: resolveSessionCreateOptions,
+  mcpRuntime: {
+    wrapperCommand: process.execPath,
+    wrapperArgs: [mcpWrapperScriptPath],
+  },
+});
+
 sessionManager.on("session-output", (payload) => {
   BrowserWindow.getAllWindows().forEach((windowInstance) => {
     windowInstance.webContents.send(`terminals:output:${payload.sessionId}`, payload.chunk);
@@ -131,6 +145,7 @@ sessionManager.on("session-exited", (payload) => {
     windowInstance.webContents.send(`terminals:exit:${payload.session.id}`, payload.session.exitCode);
     windowInstance.webContents.send(IPC_CHANNELS.sessions.updated, payload.session);
   });
+  notifySessionExitIfUnfocused(payload, BrowserWindow.getAllWindows());
 });
 sessionManager.on("session-created", (payload) => {
   BrowserWindow.getAllWindows().forEach((windowInstance) => {
@@ -276,8 +291,8 @@ function addRoleLaunchArgs(
 export async function resolveSessionCreateOptions(
   payload: CreateSessionIpcPayload,
   options: {
-    storeInstance: Pick<PersistenceStore, "getProject">;
-    packManager: Pick<AgentPackManager, "readProjectConfig">;
+    storeInstance: Pick<RemoteApiStore, "getProject">;
+    packManager: Pick<RemoteApiPackManager, "readProjectConfig">;
     mcpRuntime?: {
       wrapperCommand: string;
       wrapperArgs: string[];
@@ -412,6 +427,10 @@ function resolveMcpLaunchConfig(
 }
 
 export function registerIpcHandlers(): void {
+  void remoteApiServer.syncWithSettings().catch((error) => {
+    log.error("Failed to initialize remote API server", error);
+  });
+
   // --- Projects ---
   ipcMain.handle(IPC_CHANNELS.projects.list, async (): Promise<Project[]> => {
     log.debug("IPC: projects:list");
@@ -508,10 +527,13 @@ export function registerIpcHandlers(): void {
   });
 
   // --- Settings ---
-  ipcMain.handle(IPC_CHANNELS.settings.get, async () => ({
-    remoteApiEnabled: false, remoteApiPort: null, remoteApiBindAddress: "0.0.0.0", theme: "dark", quickLaunchShortcut: "CmdOrCtrl+K"
-  }));
-  ipcMain.handle(IPC_CHANNELS.settings.update, async (_e, data: unknown): Promise<void> => {});
+  ipcMain.handle(IPC_CHANNELS.settings.get, async (): Promise<AppSettings> => store.getSettings());
+  ipcMain.handle(IPC_CHANNELS.settings.update, async (_e, data: unknown): Promise<void> => {
+    const currentSettings = store.getSettings();
+    const nextSettings = resolveSettingsUpdate(currentSettings, data);
+    store.setSettings(nextSettings);
+    await remoteApiServer.applySettings(nextSettings);
+  });
 
   // --- Pack ---
   ipcMain.handle(IPC_CHANNELS.pack.status, async (_e, projectId?: string) => {
@@ -550,4 +572,49 @@ export function registerIpcHandlers(): void {
       }
     }
   );
+}
+
+function resolveSettingsUpdate(currentSettings: AppSettings, data: unknown): AppSettings {
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
+    throw new Error("Settings update payload must be an object.");
+  }
+
+  const patch = data as Partial<AppSettings>;
+  const nextSettings: AppSettings = {
+    ...currentSettings,
+    ...patch,
+  };
+
+  if (typeof nextSettings.remoteApiEnabled !== "boolean") {
+    throw new Error("remoteApiEnabled must be a boolean.");
+  }
+
+  if (
+    nextSettings.remoteApiPort !== null &&
+    (!Number.isInteger(nextSettings.remoteApiPort) ||
+      nextSettings.remoteApiPort <= 0 ||
+      nextSettings.remoteApiPort > 65_535)
+  ) {
+    throw new Error("remoteApiPort must be null or an integer between 1 and 65535.");
+  }
+
+  if (
+    typeof nextSettings.remoteApiBindAddress !== "string" ||
+    nextSettings.remoteApiBindAddress.trim().length === 0
+  ) {
+    throw new Error("remoteApiBindAddress must be a non-empty string.");
+  }
+
+  if (typeof nextSettings.quickLaunchShortcut !== "string") {
+    throw new Error("quickLaunchShortcut must be a string.");
+  }
+
+  if (nextSettings.theme !== "dark" && nextSettings.theme !== "light") {
+    throw new Error("theme must be 'dark' or 'light'.");
+  }
+
+  return {
+    ...nextSettings,
+    remoteApiBindAddress: nextSettings.remoteApiBindAddress.trim(),
+  };
 }

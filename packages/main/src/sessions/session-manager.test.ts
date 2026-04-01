@@ -74,9 +74,27 @@ class FakePty implements PtyProcess {
 
 class FakePtyFactory {
   readonly created: FakePty[] = [];
+  readonly spawnCalls: Array<{
+    command: string;
+    args: string[];
+    cwd: string;
+    env: NodeJS.ProcessEnv;
+    columns: number;
+    rows: number;
+    name?: string;
+  }> = [];
   #nextPid = 1000;
 
-  readonly factory: PtyFactory = async () => {
+  readonly factory: PtyFactory = async (options) => {
+    this.spawnCalls.push({
+      command: options.command,
+      args: [...options.args],
+      cwd: options.cwd,
+      env: { ...options.env },
+      columns: options.columns,
+      rows: options.rows,
+      ...(options.name ? { name: options.name } : {}),
+    });
     const pty = new FakePty(this.#nextPid);
     this.#nextPid += 1;
     this.created.push(pty);
@@ -266,5 +284,111 @@ it("starts and disposes MCP wrappers for MCP-enabled agent sessions", async () =
 
   fakeFactory.created[0]?.emitExit({ exitCode: 0, signal: null });
   expect(fakeMcpFactory.created[0]?.dispose).toHaveBeenCalledTimes(1);
+});
+
+it("injects MCP launch config into the spawned process environment and argv", async () => {
+  const fakeFactory = new FakePtyFactory();
+  const fakeMcpFactory = new FakeMcpWrapperFactory();
+  const manager = new SessionManager({
+    ptyFactory: fakeFactory.factory,
+    mcpWrapperFactory: fakeMcpFactory.factory,
+  });
+
+  const session = await manager.createSession({
+    projectId: "project-1",
+    type: "agent_role",
+    cli: "claude",
+    role: "architect",
+    workingDirectory: "/tmp/project-1/subdir",
+    mcpEnabled: true,
+    mcpLaunchConfig: {
+      injectionMethod: "argv",
+      wrapperCommand: "/usr/bin/node",
+      wrapperArgs: ["/tmp/wrapper.js", "--stdio"],
+      argsTemplate: ["--mcp", "{wrapperCommand}", "{wrapperArgsJson}", "{sessionId}", "{projectId}"],
+      envTemplate: {
+        MCP_SESSION: "{sessionId}",
+        MCP_PROJECT: "{projectId}",
+        MCP_WRAPPER: "{wrapperCommand}",
+        MCP_ARGS: "{wrapperArgsJson}",
+      },
+    },
+    launch: {
+      command: "claude",
+      args: ["chat"],
+      env: { EXISTING_FLAG: "1" },
+    },
+  });
+
+  const spawnCall = fakeFactory.spawnCalls[0];
+  expect(session.mcpWrapperId).toBe(9_000);
+  expect(spawnCall?.command).toBe("claude");
+  expect(spawnCall?.cwd).toBe("/tmp/project-1/subdir");
+  expect(spawnCall?.args).toEqual([
+    "chat",
+    "--mcp",
+    "/usr/bin/node",
+    JSON.stringify(["/tmp/wrapper.js", "--stdio"]),
+    session.id,
+    "project-1",
+  ]);
+  expect(spawnCall?.env).toMatchObject({
+    EXISTING_FLAG: "1",
+    KLEIBER_MCP_ENABLED: "true",
+    KLEIBER_MCP_TRANSPORT: "stdio",
+    KLEIBER_MCP_SESSION_ID: session.id,
+    KLEIBER_MCP_PROJECT_ID: "project-1",
+    KLEIBER_MCP_SERVER_COMMAND: "/usr/bin/node",
+    KLEIBER_MCP_SERVER_ARGS_JSON: JSON.stringify(["/tmp/wrapper.js", "--stdio"]),
+    MCP_SESSION: session.id,
+    MCP_PROJECT: "project-1",
+    MCP_WRAPPER: "/usr/bin/node",
+    MCP_ARGS: JSON.stringify(["/tmp/wrapper.js", "--stdio"]),
+  });
+});
+
+it("cleans up partially created sessions when PTY startup fails after the MCP wrapper launches", async () => {
+  const fakeMcpFactory = new FakeMcpWrapperFactory();
+  const ptyFactory = vi
+    .fn<PtyFactory>()
+    .mockImplementationOnce(async () => new FakePty(1000))
+    .mockImplementationOnce(async () => {
+      throw new Error("PTY unavailable");
+    });
+  const manager = new SessionManager({
+    ptyFactory,
+    mcpWrapperFactory: fakeMcpFactory.factory,
+  });
+
+  const parent = await manager.createSession({
+    projectId: "project-1",
+    workingDirectory: "/tmp/project-1",
+  });
+
+  await expect(
+    manager.createSession({
+      projectId: "project-1",
+      parentSessionId: parent.id,
+      type: "agent",
+      cli: "claude",
+      workingDirectory: "/tmp/project-1",
+      mcpEnabled: true,
+      mcpLaunchConfig: {
+        injectionMethod: "env",
+        wrapperCommand: process.execPath,
+        wrapperArgs: ["/tmp/fake-wrapper.js"],
+      },
+      launch: {
+        command: "claude",
+        args: [],
+        env: {},
+      },
+    }),
+  ).rejects.toThrow("PTY unavailable");
+
+  expect(fakeMcpFactory.created).toHaveLength(1);
+  expect(fakeMcpFactory.created[0]?.dispose).toHaveBeenCalledTimes(1);
+  expect(manager.listSessions("project-1")).toHaveLength(1);
+  expect(manager.getSession(parent.id)?.childSessionIds).toEqual([]);
 });
 });

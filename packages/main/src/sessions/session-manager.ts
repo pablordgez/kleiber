@@ -48,6 +48,14 @@ export interface SessionLaunchOptions {
   name?: string;
 }
 
+export interface McpLaunchConfig {
+  injectionMethod: "env" | "argv" | "stdio";
+  wrapperCommand: string;
+  wrapperArgs: string[];
+  argsTemplate?: string[];
+  envTemplate?: Record<string, string>;
+}
+
 export interface CreateSessionOptions {
   projectId: UUID;
   parentSessionId?: UUID | null;
@@ -63,6 +71,7 @@ export interface CreateSessionOptions {
   rows?: number;
   mcpEnabled?: boolean;
   mcpWrapperId?: number | null;
+  mcpLaunchConfig?: McpLaunchConfig | null;
 }
 
 export interface ReadSessionOptions {
@@ -79,7 +88,18 @@ export interface SessionManagerOptions {
   outputBufferSize?: number;
   ptyFactory?: PtyFactory;
   ptyFactoryLoader?: () => Promise<PtyFactory>;
+  mcpWrapperFactory?: McpWrapperFactory;
 }
+
+export interface McpWrapperRuntime {
+  pid: number;
+  dispose(): void;
+}
+
+export type McpWrapperFactory = (context: {
+  sessionId: UUID;
+  projectId: UUID;
+}) => Promise<McpWrapperRuntime> | McpWrapperRuntime;
 
 export interface ManagedSessionRecord extends SessionRecord {
   name: string;
@@ -145,6 +165,7 @@ export class SessionManager extends EventEmitter {
   readonly #outputBufferSize: number;
   readonly #providedPtyFactory: PtyFactory | null;
   readonly #ptyFactoryLoader: () => Promise<PtyFactory>;
+  readonly #mcpWrapperFactory: McpWrapperFactory | null;
   #loadedPtyFactoryPromise: Promise<PtyFactory> | null = null;
 
   constructor(options: SessionManagerOptions = {}) {
@@ -152,6 +173,7 @@ export class SessionManager extends EventEmitter {
     this.#outputBufferSize = options.outputBufferSize ?? DEFAULT_OUTPUT_BUFFER_SIZE;
     this.#providedPtyFactory = options.ptyFactory ?? null;
     this.#ptyFactoryLoader = options.ptyFactoryLoader ?? loadDefaultPtyFactory;
+    this.#mcpWrapperFactory = options.mcpWrapperFactory ?? null;
   }
 
   on<Event extends EventName>(eventName: Event, listener: (payload: SessionManagerEvents[Event]) => void): this {
@@ -205,6 +227,21 @@ export class SessionManager extends EventEmitter {
 
     try {
       const spawnOptions = resolveSpawnOptions(type, options);
+      if (runtime.mcpEnabled && type !== "plain") {
+        applyMcpLaunchConfig(spawnOptions, options.mcpLaunchConfig ?? null, {
+          sessionId: runtime.id,
+          projectId: runtime.projectId,
+        });
+        const wrapperRuntime = await this.#startMcpWrapper(runtime.id, runtime.projectId);
+        if (wrapperRuntime) {
+          runtime.mcpWrapperId = wrapperRuntime.pid;
+          runtime.cleanup.push({
+            dispose: () => {
+              wrapperRuntime.dispose();
+            },
+          });
+        }
+      }
       const pty = await this.#getPtyFactory().then((factory) =>
         factory({
           command: spawnOptions.command,
@@ -226,6 +263,7 @@ export class SessionManager extends EventEmitter {
     } catch (error) {
       this.#sessions.delete(runtime.id);
       parentSession?.childSessionIds.delete(runtime.id);
+      cleanupRuntime(runtime);
       throw error;
     }
   }
@@ -309,6 +347,17 @@ export class SessionManager extends EventEmitter {
 
     this.#loadedPtyFactoryPromise ??= this.#ptyFactoryLoader();
     return this.#loadedPtyFactoryPromise;
+  }
+
+  async #startMcpWrapper(sessionId: UUID, projectId: UUID): Promise<McpWrapperRuntime | null> {
+    if (!this.#mcpWrapperFactory) {
+      return null;
+    }
+
+    return this.#mcpWrapperFactory({
+      sessionId,
+      projectId,
+    });
   }
 
   #setState(session: SessionRuntimeRecord, nextState: SessionState): void {
@@ -522,6 +571,63 @@ function resolveSpawnOptions(
     env: {},
     name: defaultPtyName(),
   };
+}
+
+function applyMcpLaunchConfig(
+  spawnOptions: Required<SessionLaunchOptions>,
+  config: McpLaunchConfig | null,
+  context: { sessionId: UUID; projectId: UUID },
+): void {
+  const wrapperCommand = config?.wrapperCommand ?? process.execPath;
+  const wrapperArgs = config?.wrapperArgs ?? [];
+  const baseEnv: NodeJS.ProcessEnv = {
+    KLEIBER_MCP_ENABLED: "true",
+    KLEIBER_MCP_TRANSPORT: "stdio",
+    KLEIBER_MCP_SESSION_ID: context.sessionId,
+    KLEIBER_MCP_PROJECT_ID: context.projectId,
+    KLEIBER_MCP_SERVER_COMMAND: wrapperCommand,
+    KLEIBER_MCP_SERVER_ARGS_JSON: JSON.stringify(wrapperArgs),
+    ...(config?.envTemplate ? replaceTemplateValues(config.envTemplate, context, wrapperCommand, wrapperArgs) : {}),
+  };
+
+  spawnOptions.env = {
+    ...spawnOptions.env,
+    ...baseEnv,
+  };
+
+  if (config?.injectionMethod === "argv" && config.argsTemplate) {
+    spawnOptions.args = [
+      ...spawnOptions.args,
+      ...config.argsTemplate.map((entry) => replaceTemplateValue(entry, context, wrapperCommand, wrapperArgs)),
+    ];
+  }
+}
+
+function replaceTemplateValues(
+  template: Record<string, string>,
+  context: { sessionId: UUID; projectId: UUID },
+  wrapperCommand: string,
+  wrapperArgs: string[],
+): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(template).map(([key, value]) => [
+      key,
+      replaceTemplateValue(value, context, wrapperCommand, wrapperArgs),
+    ]),
+  );
+}
+
+function replaceTemplateValue(
+  value: string,
+  context: { sessionId: UUID; projectId: UUID },
+  wrapperCommand: string,
+  wrapperArgs: string[],
+): string {
+  return value
+    .replaceAll("{sessionId}", context.sessionId)
+    .replaceAll("{projectId}", context.projectId)
+    .replaceAll("{wrapperCommand}", wrapperCommand)
+    .replaceAll("{wrapperArgsJson}", JSON.stringify(wrapperArgs));
 }
 
 function resolveDefaultShell(): string {

@@ -20,6 +20,7 @@ declare global {
         remove: (id: UUID) => Promise<void>;
       };
       sessions: {
+        onUpdated: (callback: (session: Session) => void) => (() => void);
         list: (projectId: UUID) => Promise<Session[]>;
         create: (data: {
           projectId: UUID;
@@ -32,6 +33,13 @@ declare global {
         }) => Promise<Session>;
         kill: (id: UUID) => Promise<void>;
         rename: (id: UUID, name: string) => Promise<void>;
+        send: (id: UUID, input: string) => Promise<void>;
+        read: (id: UUID, limit?: number) => Promise<string[]>;
+      };
+      terminals: {
+        resize: (id: UUID, cols: number, rows: number) => Promise<void>;
+        onOutput: (id: UUID, callback: (data: string) => void) => (() => void);
+        onExit: (id: UUID, callback: (code: number | null) => void) => (() => void);
       };
       settings: {
         get: () => Promise<AppSettings>;
@@ -53,6 +61,7 @@ export const App: React.FC = () => {
     setSessions,
     selectSession,
     removeSession,
+    updateSession,
   } = useAppStore();
 
   const [settings, setSettings] = useState<AppSettings | null>(null);
@@ -87,6 +96,13 @@ export const App: React.FC = () => {
         .catch((err: unknown) => console.error('Failed to load sessions', err));
     }
   }, [selectedProjectId, setSessions]);
+
+  useEffect(() => {
+    const unsubscribe = window.kleiber.sessions.onUpdated((session) => {
+      updateSession(session);
+    });
+    return () => unsubscribe();
+  }, [updateSession]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -151,7 +167,6 @@ export const App: React.FC = () => {
               onKill={() =>
                 window.kleiber.sessions
                   .kill(selectedSession.id)
-                  .then(() => removeSession(selectedSession.id))
                   .catch((err: unknown) => console.error('Failed to kill session', err))
               }
             />

@@ -18,6 +18,14 @@ const api = {
     send: (id: UUID, input: string): Promise<void> => ipcRenderer.invoke("sessions:send", id, input),
     read: (id: UUID, limit?: number): Promise<string[]> => ipcRenderer.invoke("sessions:read", id, limit),
     kill: (id: UUID): Promise<void> => ipcRenderer.invoke("sessions:kill", id),
+    onUpdated: (callback: (session: Session) => void): (() => void) => {
+      const channel = "sessions:updated";
+      const listener = (_event: Electron.IpcRendererEvent, session: Session): void => callback(session);
+      ipcRenderer.on(channel, listener);
+      return () => {
+        ipcRenderer.removeListener(channel, listener);
+      };
+    },
   },
   settings: {
     get: (): Promise<AppSettings> => ipcRenderer.invoke("settings:get"),

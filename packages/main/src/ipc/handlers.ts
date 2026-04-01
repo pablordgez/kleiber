@@ -4,25 +4,11 @@ import { ipcMain, BrowserWindow } from "electron";
 import { IPC_CHANNELS, SUPPORTED_AGENT_CLIS } from "@kleiber/shared";
 import log from "electron-log";
 import type { AgentCli, AgentPackConfig, Project, Session, SessionType } from "@kleiber/shared";
-import { SessionManager } from "../sessions/session-manager";
+import { McpOrchestrator, createMcpSocketBridgeServer } from "../mcp";
+import type { ParentToWrapperResponse, WrapperToParentRequest } from "../mcp";
+import { SessionManager, type McpLaunchConfig } from "../sessions/session-manager";
 import { AgentPackManager } from "../pack/agent-pack-manager";
 import { resolveHarnessAdapter } from "../pack/harness-adapter";
-
-export const sessionManager = new SessionManager();
-
-sessionManager.on("session-output", (payload) => {
-  BrowserWindow.getAllWindows().forEach(w => w.webContents.send(`terminals:output:${payload.sessionId}`, payload.chunk));
-});
-sessionManager.on("session-exited", (payload) => {
-  BrowserWindow.getAllWindows().forEach(w => w.webContents.send(`terminals:exit:${payload.session.id}`, payload.session.exitCode));
-  BrowserWindow.getAllWindows().forEach(w => w.webContents.send(IPC_CHANNELS.sessions.updated, payload.session));
-});
-sessionManager.on("session-created", (payload) => {
-  BrowserWindow.getAllWindows().forEach(w => w.webContents.send(IPC_CHANNELS.sessions.updated, payload.session));
-});
-sessionManager.on("session-updated", (payload) => {
-  BrowserWindow.getAllWindows().forEach(w => w.webContents.send(IPC_CHANNELS.sessions.updated, payload.session));
-});
 
 import { PersistenceStore } from "../store";
 
@@ -48,29 +34,114 @@ const DEFAULT_PACK_CONFIG: AgentPackConfig = {
       enabled: true,
       orchestration: "native_subagents",
       launch_command: "codex",
+      mcp_injection: "argv",
     },
     claude_code: {
       enabled: true,
       orchestration: "native_subagents_or_agent_teams",
       launch_command: "claude",
+      mcp_injection: "env",
     },
     opencode: {
       enabled: true,
       orchestration: "plugin_or_manual",
       launch_command: "opencode",
+      mcp_injection: "env",
     },
     gemini_cli: {
       enabled: true,
       orchestration: "experimental_subagents",
       launch_command: "gemini",
+      mcp_injection: "env",
     },
   },
   mcp: {
-    available: [],
+    available: ["kleiber-local"],
     notes: [],
   },
-  agent_overrides: {},
+  agent_overrides: {
+    codex: {
+      mcp_args_template: [
+        "-c",
+        "mcp_servers.kleiber.command={wrapperCommandJson}",
+        "-c",
+        "mcp_servers.kleiber.args={wrapperArgsJson}",
+        "-c",
+        "mcp_servers.kleiber.env.KLEIBER_SESSION_ID={sessionId}",
+        "-c",
+        "mcp_servers.kleiber.env.KLEIBER_PROJECT_ID={projectId}",
+        "-c",
+        "mcp_servers.kleiber.env.KLEIBER_MCP_SOCKET_PATH={mcpSocketPath}",
+      ],
+    },
+    opencode: {
+      mcp_env_template: {
+        OPENCODE_CONFIG_CONTENT:
+          '{"$schema":"https://opencode.ai/config.json","mcp":{"kleiber":{"type":"local","enabled":true,"command":{wrapperCommandAndArgsJson},"environment":{"KLEIBER_SESSION_ID":"{sessionId}","KLEIBER_PROJECT_ID":"{projectId}","KLEIBER_MCP_SOCKET_PATH":"{mcpSocketPath}"}}}}',
+      },
+    },
+  },
 };
+
+const mcpWrapperScriptPath = path.resolve(__dirname, "../mcp/stdio-wrapper.js");
+
+export const sessionManager = new SessionManager({
+  mcpWrapperFactory: ({ sessionId }) =>
+    createMcpSocketBridgeServer({
+      sessionId,
+      onRequest: async (message: WrapperToParentRequest): Promise<ParentToWrapperResponse> => {
+        const response: ParentToWrapperResponse = {
+          kind: "kleiber.mcp.response",
+          requestId: message.requestId,
+          ok: true,
+        };
+
+        try {
+          response.result = await mcpOrchestrator.handleParentRequest({
+            method: message.method,
+            params: message.params,
+            context: message.context,
+          });
+        } catch (error) {
+          response.ok = false;
+          response.error = {
+            message: error instanceof Error ? error.message : String(error),
+          };
+        }
+
+        return response;
+      },
+    }),
+});
+
+const mcpOrchestrator = new McpOrchestrator({
+  sessionManager,
+  store,
+  packManager: agentPackManager,
+  defaultPackConfig: DEFAULT_PACK_CONFIG,
+});
+
+sessionManager.on("session-output", (payload) => {
+  BrowserWindow.getAllWindows().forEach((windowInstance) => {
+    windowInstance.webContents.send(`terminals:output:${payload.sessionId}`, payload.chunk);
+  });
+});
+sessionManager.on("session-exited", (payload) => {
+  BrowserWindow.getAllWindows().forEach((windowInstance) => {
+    windowInstance.webContents.send(`terminals:exit:${payload.session.id}`, payload.session.exitCode);
+    windowInstance.webContents.send(IPC_CHANNELS.sessions.updated, payload.session);
+  });
+});
+sessionManager.on("session-created", (payload) => {
+  BrowserWindow.getAllWindows().forEach((windowInstance) => {
+    windowInstance.webContents.send(IPC_CHANNELS.sessions.updated, payload.session);
+  });
+});
+sessionManager.on("session-updated", (payload) => {
+  BrowserWindow.getAllWindows().forEach((windowInstance) => {
+    windowInstance.webContents.send(IPC_CHANNELS.sessions.updated, payload.session);
+  });
+});
 
 const CLI_ALIASES: Readonly<Record<string, AgentCli>> = {
   "claude-code": "claude",
@@ -94,6 +165,7 @@ interface CreateSessionIpcPayload {
   role?: string;
   yolo?: boolean;
   workingDirectory?: string;
+  mcpEnabled?: boolean;
 }
 
 function isSupportedCli(value: string): value is AgentCli {
@@ -142,6 +214,31 @@ function resolveAgentOverride(
   return entry as Record<string, unknown>;
 }
 
+function readStringArrayOverride(source: Record<string, unknown>, keys: string[]): string[] | null {
+  for (const key of keys) {
+    const value = source[key];
+    if (Array.isArray(value) && value.every((entry) => typeof entry === "string")) {
+      return value as string[];
+    }
+  }
+
+  return null;
+}
+
+function readStringRecordOverride(source: Record<string, unknown>, keys: string[]): Record<string, string> | null {
+  for (const key of keys) {
+    const value = source[key];
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      const entries = Object.entries(value as Record<string, unknown>);
+      if (entries.every(([, entry]) => typeof entry === "string")) {
+        return Object.fromEntries(entries) as Record<string, string>;
+      }
+    }
+  }
+
+  return null;
+}
+
 function addRoleLaunchArgs(
   args: string[],
   override: Record<string, unknown>,
@@ -181,6 +278,10 @@ export async function resolveSessionCreateOptions(
   options: {
     storeInstance: Pick<PersistenceStore, "getProject">;
     packManager: Pick<AgentPackManager, "readProjectConfig">;
+    mcpRuntime?: {
+      wrapperCommand: string;
+      wrapperArgs: string[];
+    };
   },
 ): Promise<{
   project: Project;
@@ -199,6 +300,8 @@ export async function resolveSessionCreateOptions(
       args: string[];
       env: NodeJS.ProcessEnv;
     };
+    mcpEnabled?: boolean;
+    mcpLaunchConfig?: McpLaunchConfig | null;
   };
 }> {
   const project = options.storeInstance.getProject(payload.projectId);
@@ -226,6 +329,8 @@ export async function resolveSessionCreateOptions(
       args: string[];
       env: NodeJS.ProcessEnv;
     };
+    mcpEnabled?: boolean;
+    mcpLaunchConfig?: McpLaunchConfig | null;
   } = {
     projectId: payload.projectId,
     parentSessionId: payload.parentSessionId ?? null,
@@ -266,13 +371,44 @@ export async function resolveSessionCreateOptions(
   }
 
   createSessionInput.cli = canonicalCli;
+  const requestedMcpEnabled = payload.mcpEnabled ?? true;
+  const mcpLaunchConfig = requestedMcpEnabled
+    ? resolveMcpLaunchConfig(adapter.mcpInjection, override, options.mcpRuntime)
+    : null;
   createSessionInput.launch = {
     command: adapter.launchCommand,
     args: launchArgs,
     env: role ? { KLEIBER_AGENT_ROLE: role } : {},
   };
+  createSessionInput.mcpEnabled = Boolean(mcpLaunchConfig);
+  createSessionInput.mcpLaunchConfig = mcpLaunchConfig;
 
   return { project, createSessionInput };
+}
+
+function resolveMcpLaunchConfig(
+  injectionMethod: "env" | "argv" | "stdio" | "none" | "unknown" | null,
+  override: Record<string, unknown>,
+  runtime: { wrapperCommand: string; wrapperArgs: string[] } | undefined,
+): McpLaunchConfig | null {
+  if (!runtime || !injectionMethod || injectionMethod === "none" || injectionMethod === "unknown") {
+    return null;
+  }
+
+  const argsTemplate = readStringArrayOverride(override, ["mcp_args_template", "mcpArgsTemplate"]);
+  const envTemplate = readStringRecordOverride(override, ["mcp_env_template", "mcpEnvTemplate"]) ?? {};
+
+  if (injectionMethod === "argv" && !argsTemplate) {
+    return null;
+  }
+
+  return {
+    injectionMethod,
+    wrapperCommand: runtime.wrapperCommand,
+    wrapperArgs: runtime.wrapperArgs,
+    ...(argsTemplate ? { argsTemplate } : {}),
+    envTemplate,
+  };
 }
 
 export function registerIpcHandlers(): void {
@@ -322,6 +458,10 @@ export function registerIpcHandlers(): void {
         const { createSessionInput } = await resolveSessionCreateOptions(data, {
           storeInstance: store,
           packManager: agentPackManager,
+          mcpRuntime: {
+            wrapperCommand: process.execPath,
+            wrapperArgs: [mcpWrapperScriptPath],
+          },
         });
         const session = await sessionManager.createSession(createSessionInput);
         return session as unknown as Session;

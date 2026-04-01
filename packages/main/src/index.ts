@@ -1,6 +1,7 @@
 import path from "node:path";
 import { app, BrowserWindow } from "electron";
 import { configureMainLogging, startSecurityEventLogging } from "./logging";
+import { registerIpcHandlers } from "./ipc/handlers";
 
 configureMainLogging(process.env.NODE_ENV === "development");
 
@@ -24,6 +25,7 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
+  registerIpcHandlers();
   createWindow();
 
   app.on("activate", () => {

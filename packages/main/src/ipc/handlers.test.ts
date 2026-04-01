@@ -442,4 +442,35 @@ describe("IPC handlers remediation", () => {
     expect(roles).toEqual(["architect", "task-planner"]);
     expect(mockState.getPackStatusMock).toHaveBeenCalledWith(projectDir);
   });
+  it("notifies on session exit when the app is unfocused", async () => {
+    const { registerIpcHandlers } = await import("./handlers.js");
+    registerIpcHandlers();
+
+    const sessionExitHandler = mockState.onSessionEventMock.mock.calls.find(
+      (call) => call[0] === "session-exited",
+    )?.[1] as ((payload: any) => void) | undefined;
+
+    sessionExitHandler?.({
+      session: {
+        id: "session-exit-1",
+        name: "Exit Session",
+        exitCode: 7,
+        signal: null,
+      },
+      previousState: "running",
+    });
+
+    expect(mockState.notifySessionExitIfUnfocusedMock).toHaveBeenCalledWith(
+      {
+        session: {
+          id: "session-exit-1",
+          name: "Exit Session",
+          exitCode: 7,
+          signal: null,
+        },
+        previousState: "running",
+      },
+      [],
+    );
+  });
 });

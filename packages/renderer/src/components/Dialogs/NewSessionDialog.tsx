@@ -162,49 +162,49 @@ export const NewSessionDialog: React.FC<NewSessionDialogProps> = ({
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 bg-[#09090B]/80 backdrop-blur-sm z-40" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-md bg-[#18181B] border border-[#3F3F46] rounded-lg z-50 p-6">
-          <div className="flex items-center justify-between mb-4">
-            <Dialog.Title className="text-lg font-medium text-[#FAFAFA]">
+        <Dialog.Overlay className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40" />
+        <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[420px] bg-[#0A0A0A] border border-[#1C1C1C] rounded-lg z-50 p-6 shadow-xl shadow-black/50">
+          <div className="flex items-center justify-between mb-5">
+            <Dialog.Title className="text-base font-semibold text-[#FFFFFF]">
               {parentSessionId ? 'New Sub-Session' : 'New Session'}
             </Dialog.Title>
-            <Dialog.Close className="text-[#A1A1AA] hover:text-[#FAFAFA] rounded-sm opacity-70 hover:opacity-100 transition-opacity">
-              <X size={20} />
+            <Dialog.Close className="text-[#666666] hover:text-[#FFFFFF] rounded-lg p-0.5 transition-colors">
+              <X size={18} />
             </Dialog.Close>
           </div>
 
           <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-            {error && <div className="text-red-500 text-sm bg-red-500/10 p-2 rounded">{error}</div>}
+            {error && <div className="text-[#EF4444] text-sm bg-[#EF4444]/10 p-2.5 rounded-lg">{error}</div>}
 
             {!packInstalled && (
-              <div className="text-[#F97316] text-xs bg-[#F97316]/10 border border-[#F97316]/30 p-2 rounded">
+              <div className="text-[#666666] text-xs bg-[#141414] border border-[#1C1C1C] p-2.5 rounded-lg">
                 Agent pack is not installed globally. Role options may be unavailable.
               </div>
             )}
 
-            <div className="flex flex-col gap-2">
-              <label htmlFor="session-name" className="text-sm font-medium text-[#FAFAFA]">
+            <div className="flex flex-col gap-1.5">
+              <label htmlFor="session-name" className="text-[13px] font-medium text-[#FFFFFF]">
                 Name
               </label>
               <input
                 id="session-name"
                 value={name}
                 onChange={(event) => setName(event.target.value)}
-                className="flex h-10 w-full rounded-md border border-[#3F3F46] bg-[#09090B] px-3 py-2 text-sm text-[#FAFAFA] placeholder:text-[#A1A1AA] focus:outline-none focus:border-[#FAFAFA]"
+                className="flex h-9 w-full rounded-lg border border-[#1C1C1C] bg-[#000000] px-3 py-2 text-sm text-[#FFFFFF] placeholder:text-[#444444] focus:outline-none focus:border-[#333333] transition-colors"
                 placeholder={parentSessionId ? 'Sub-session Name' : 'Session Name'}
                 required
               />
             </div>
 
-            <div className="flex flex-col gap-2">
-              <label htmlFor="cli-select" className="text-sm font-medium text-[#FAFAFA]">
+            <div className="flex flex-col gap-1.5">
+              <label htmlFor="cli-select" className="text-[13px] font-medium text-[#FFFFFF]">
                 CLI Tool
               </label>
               <select
                 id="cli-select"
                 value={cli}
                 onChange={(event) => setCli(event.target.value as AgentCli | 'plain')}
-                className="flex h-10 w-full rounded-md border border-[#3F3F46] bg-[#09090B] px-3 py-2 text-sm text-[#FAFAFA] focus:outline-none focus:border-[#FAFAFA]"
+                className="flex h-9 w-full rounded-lg border border-[#1C1C1C] bg-[#000000] px-3 py-2 text-sm text-[#FFFFFF] focus:outline-none focus:border-[#333333] transition-colors"
               >
                 {CLIS.map((cliOption) => (
                   <option key={cliOption.value} value={cliOption.value}>
@@ -214,15 +214,15 @@ export const NewSessionDialog: React.FC<NewSessionDialogProps> = ({
               </select>
             </div>
 
-            <div className="flex flex-col gap-2">
-              <label htmlFor="role-select" className="text-sm font-medium text-[#FAFAFA]">
+            <div className="flex flex-col gap-1.5">
+              <label htmlFor="role-select" className="text-[13px] font-medium text-[#FFFFFF]">
                 Agent Role
               </label>
               <select
                 id="role-select"
                 value={role}
                 onChange={(event) => setRole(event.target.value)}
-                className="flex h-10 w-full rounded-md border border-[#3F3F46] bg-[#09090B] px-3 py-2 text-sm text-[#FAFAFA] focus:outline-none focus:border-[#FAFAFA]"
+                className="flex h-9 w-full rounded-lg border border-[#1C1C1C] bg-[#000000] px-3 py-2 text-sm text-[#FFFFFF] focus:outline-none focus:border-[#333333] transition-colors"
                 disabled={isLoadingRoles}
               >
                 {roleOptions.map((roleOption) => (
@@ -231,10 +231,10 @@ export const NewSessionDialog: React.FC<NewSessionDialogProps> = ({
                   </option>
                 ))}
               </select>
-              {isLoadingRoles && <span className="text-xs text-[#A1A1AA]">Loading roles...</span>}
+              {isLoadingRoles && <span className="text-xs text-[#666666]">Loading roles...</span>}
             </div>
 
-            <div className="flex items-center gap-2 mt-2">
+            <div className="flex items-center gap-2 mt-1">
               <input
                 type="checkbox"
                 id="session-yolo"
@@ -242,26 +242,26 @@ export const NewSessionDialog: React.FC<NewSessionDialogProps> = ({
                 onChange={(event) => setYolo(event.target.checked)}
                 disabled={yoloDisabled}
                 aria-disabled={yoloDisabled}
-                className="h-4 w-4 rounded border-[#3F3F46] bg-[#09090B] disabled:opacity-50"
+                className="h-4 w-4 rounded border-[#1C1C1C] bg-[#000000] accent-white disabled:opacity-40"
               />
               <label
                 htmlFor="session-yolo"
-                className={`text-sm font-medium ${yoloDisabled ? 'text-[#A1A1AA]' : 'text-[#FAFAFA]'}`}
+                className={`text-[13px] font-medium ${yoloDisabled ? 'text-[#666666]' : 'text-[#FFFFFF]'}`}
               >
                 Enable YOLO mode
               </label>
             </div>
             {yoloDisabled && !projectYoloDefault && (
-              <p className="text-xs text-[#A1A1AA] -mt-2">
+              <p className="text-xs text-[#666666] -mt-2">
                 This project has YOLO disabled by default, so new sessions start with YOLO off.
               </p>
             )}
 
-            <div className="flex justify-end gap-3 mt-4">
+            <div className="flex justify-end gap-2 mt-3 pt-3 border-t border-[#1C1C1C]">
               <Dialog.Close asChild>
                 <button
                   type="button"
-                  className="px-4 py-2 text-sm font-medium text-[#FAFAFA] hover:bg-[#27272A] rounded-md transition-colors"
+                  className="px-4 py-2 text-sm font-medium text-[#666666] hover:text-[#FFFFFF] hover:bg-[#141414] rounded-lg transition-colors"
                 >
                   Cancel
                 </button>
@@ -269,7 +269,7 @@ export const NewSessionDialog: React.FC<NewSessionDialogProps> = ({
               <button
                 type="submit"
                 disabled={isSubmitting || !name.trim()}
-                className="px-4 py-2 text-sm font-medium bg-[#FAFAFA] text-[#09090B] hover:bg-[#FAFAFA]/90 rounded-md transition-colors disabled:opacity-50"
+                className="px-4 py-2 text-sm font-medium bg-[#FFFFFF] text-[#000000] hover:bg-[#E5E5E5] rounded-lg transition-colors disabled:opacity-40"
               >
                 {isSubmitting ? 'Creating...' : 'Create Session'}
               </button>

@@ -16,6 +16,8 @@ export default defineConfig({
       emptyOutDir: true,
       rollupOptions: {
         input: path.resolve(__dirname, "packages/main/src/index.ts"),
+        // `ws` probes these native addons behind try/catch; they should stay optional.
+        external: ["bufferutil", "utf-8-validate"],
       },
     },
   },

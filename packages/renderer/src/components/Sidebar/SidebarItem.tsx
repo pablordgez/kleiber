@@ -26,7 +26,7 @@ const getStatusColor = (state: SessionState | null): string => {
     case 'exited':
       return 'bg-[#EF4444]';
     default:
-      return 'bg-[#A1A1AA]';
+      return 'bg-[#666666]';
   }
 };
 
@@ -42,46 +42,46 @@ export const SidebarItem: React.FC<SidebarItemProps> = ({
   onSelect,
   contextMenuItems,
 }) => {
-  const indent = Math.min(level, 6) * 16;
+  const indent = Math.min(level, 6) * 14;
   const isDeep = level > 6;
 
   return (
     <div
       className={cn(
-        'group flex items-center h-[32px] w-full cursor-pointer select-none text-sm text-[#A1A1AA]',
-        'hover:bg-[#27272A] hover:text-[#FAFAFA] transition-colors duration-150 ease-out',
-        isActive && 'bg-[#27272A] text-[#FAFAFA]',
-        isDeep && 'border-l border-dashed border-[#3F3F46]',
+        'group flex items-center h-[30px] w-full cursor-pointer select-none text-[13px] rounded-lg',
+        'text-[#999999] hover:bg-[#111111] hover:text-[#FFFFFF] transition-colors',
+        isActive && 'bg-[#111111] text-[#FFFFFF]',
+        isDeep && 'border-l border-dashed border-[#1C1C1C]',
       )}
       style={{
         paddingLeft: isDeep ? '8px' : `${indent + 8}px`,
-        paddingRight: '8px',
-        marginLeft: isDeep ? `${6 * 16}px` : undefined,
+        paddingRight: '6px',
+        marginLeft: isDeep ? `${6 * 14}px` : undefined,
       }}
       onClick={onSelect}
     >
       {/* Chevron toggle */}
       <div
-        className="w-4 h-4 flex items-center justify-center mr-1 shrink-0"
+        className="w-4 h-4 flex items-center justify-center mr-0.5 shrink-0"
         onClick={(e) => {
           e.stopPropagation();
           if (hasChildren) onToggle();
         }}
       >
         {hasChildren &&
-          (isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />)}
+          (isExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />)}
       </div>
 
       {/* Status dot */}
       {statusState !== null && (
-        <div className={cn('w-2 h-2 rounded-full mr-2 shrink-0', getStatusColor(statusState))} />
+        <div className={cn('w-1.5 h-1.5 rounded-full mr-2 shrink-0', getStatusColor(statusState))} />
       )}
 
       <span className="truncate flex-1">{label}</span>
 
       {/* YOLO badge */}
       {yolo && (
-        <span className="text-[10px] font-bold text-[#F97316] ml-2 px-1 border border-[#F97316]/30 rounded shrink-0">
+        <span className="text-[9px] font-semibold text-[#F97316] ml-1.5 px-1 py-px border border-[#F97316]/25 rounded shrink-0 uppercase tracking-wide">
           YOLO
         </span>
       )}
@@ -93,25 +93,25 @@ export const SidebarItem: React.FC<SidebarItemProps> = ({
             <div
               role="button"
               aria-label="More options"
-              className="opacity-0 group-hover:opacity-100 p-1 hover:bg-[#3F3F46] rounded ml-1 shrink-0"
+              className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-[#1C1C1C] rounded-lg ml-0.5 shrink-0 transition-opacity"
               onClick={(e) => e.stopPropagation()}
             >
-              <MoreHorizontal size={14} />
+              <MoreHorizontal size={13} />
             </div>
           </DropdownMenu.Trigger>
           <DropdownMenu.Portal>
             <DropdownMenu.Content
-              className="min-w-[160px] bg-[#18181B] border border-[#3F3F46] rounded-md p-1 z-50"
-              sideOffset={5}
+              className="min-w-[160px] bg-[#0A0A0A] border border-[#1C1C1C] rounded-lg p-1 z-50 shadow-xl shadow-black/50"
+              sideOffset={4}
             >
               {contextMenuItems.map((item, i) => (
                 <DropdownMenu.Item
                   key={i}
                   className={cn(
-                    'flex items-center px-2 py-1.5 text-sm rounded outline-none cursor-pointer',
+                    'flex items-center px-2 py-1.5 text-[13px] rounded-lg outline-none cursor-pointer transition-colors',
                     item.destructive
                       ? 'text-[#EF4444] hover:bg-[#EF4444]/10 focus:bg-[#EF4444]/10'
-                      : 'text-[#FAFAFA] hover:bg-[#27272A] focus:bg-[#27272A]',
+                      : 'text-[#FFFFFF] hover:bg-[#141414] focus:bg-[#141414]',
                   )}
                   onClick={(e) => {
                     e.stopPropagation();

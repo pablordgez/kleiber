@@ -20,8 +20,11 @@ export const TerminalPane: React.FC<TerminalPaneProps> = ({ sessionId }) => {
 
     term.current = new Terminal({
       theme: {
-        background: '#09090B',
-        foreground: '#A1A1AA',
+        background: '#000000',
+        foreground: '#E5E5E5',
+        cursor: '#FFFFFF',
+        cursorAccent: '#000000',
+        selectionBackground: '#FFFFFF20',
       },
       fontFamily: 'JetBrains Mono, Fira Code, Menlo, Consolas, monospace',
       fontSize: 14,
@@ -84,7 +87,7 @@ export const TerminalPane: React.FC<TerminalPaneProps> = ({ sessionId }) => {
 
   return (
     <div className="flex-1 w-full h-full relative flex flex-col" style={{ minHeight: 0 }}>
-      {error && <div className="bg-red-900/50 text-red-200 p-2 text-xs font-mono border-b border-red-900">{error}</div>}
+      {error && <div className="bg-[#EF4444]/10 text-[#EF4444] px-4 py-2 text-xs font-mono border-b border-[#1C1C1C]">{error}</div>}
       <div className="flex-1 relative">
         <div ref={terminalRef} className="absolute inset-0 p-2" />
       </div>

@@ -1,10 +1,12 @@
 import { createServer } from "node:net";
+import path from "node:path";
 
 import type { AppSettings } from "@kleiber/shared";
 import { DEFAULT_REMOTE_API_BIND_ADDRESS, DEFAULT_REMOTE_API_START_PORT } from "@kleiber/shared";
 import Fastify, { type FastifyInstance } from "fastify";
 import rateLimit from "@fastify/rate-limit";
 import websocket from "@fastify/websocket";
+import fastifyStatic from "@fastify/static";
 
 import { createSigningKey, issueAuthToken, verifyPassword } from "./auth";
 import { createAuthPreHandler } from "./middleware";
@@ -85,6 +87,12 @@ export async function buildRemoteApiApp(options: BuildRemoteApiAppOptions): Prom
     },
   });
 
+  // Serve static files from the Vite-built web UI bundle
+  await app.register(fastifyStatic, {
+    root: path.join(__dirname, "../web"),
+    wildcard: false,
+  });
+
   app.post(
     "/auth",
     {
@@ -126,13 +134,21 @@ export async function buildRemoteApiApp(options: BuildRemoteApiAppOptions): Prom
   const authPreHandlerOptions: Parameters<typeof createAuthPreHandler>[0] = {
     getCredentials: () => options.store.getRemoteApiCredentials(),
     signingKey: options.signingKey,
-    publicPaths: ["/auth", "/ws/sessions/:sessionId/output", "/ws/sessions/:sessionId/input"],
+    publicPaths: ["/auth", "/ws/sessions/:sessionId/output", "/ws/sessions/:sessionId/input", "/*"],
   };
   if (options.now) {
     authPreHandlerOptions.now = options.now;
   }
 
-  app.addHook("preHandler", createAuthPreHandler(authPreHandlerOptions));
+  // Use a custom preHandler that skips auth for static files, but not for API routes
+  const basePreHandler = createAuthPreHandler(authPreHandlerOptions);
+  app.addHook("preHandler", async (request, reply) => {
+    // Skip auth for static assets requests (simple heuristic: GET requests with an extension, or the root path)
+    if (request.method === "GET" && (!request.url.startsWith("/projects") && !request.url.startsWith("/sessions") && !request.url.startsWith("/status"))) {
+      return;
+    }
+    return (basePreHandler as any)(request, reply);
+  });
 
   await registerProjectRoutes(app, {
     store: options.store,
@@ -166,6 +182,15 @@ export async function buildRemoteApiApp(options: BuildRemoteApiAppOptions): Prom
       username: request.remoteApiAuth?.username ?? null,
       authMode: request.remoteApiAuth?.mode ?? null,
     };
+  });
+
+  // SPA fallback for all non-API routes
+  app.setNotFoundHandler((request, reply) => {
+    const accept = request.headers.accept;
+    if (accept && accept.includes("application/json")) {
+      return reply.code(404).send({ error: "Not found" });
+    }
+    return reply.sendFile("index.html");
   });
 
   return app;

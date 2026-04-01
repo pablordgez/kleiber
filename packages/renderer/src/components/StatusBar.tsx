@@ -1,6 +1,5 @@
 import React from 'react';
 import { Server } from 'lucide-react';
-import { cn } from '../lib/utils';
 
 export interface StatusBarProps {
   remoteApiEnabled: boolean;
@@ -9,16 +8,16 @@ export interface StatusBarProps {
 
 export const StatusBar: React.FC<StatusBarProps> = ({ remoteApiEnabled, remoteApiPort }) => {
   return (
-    <div className="flex items-center gap-2 px-2 py-1.5 rounded-md bg-[#18181B] border border-[#3F3F46] text-xs font-medium">
+    <div className="flex items-center gap-2 px-2 py-1.5 rounded-lg bg-[#0A0A0A] text-xs">
       <Server
-        size={14}
-        className={cn(remoteApiEnabled ? 'text-[#22C55E]' : 'text-[#A1A1AA]')}
+        size={13}
+        className={remoteApiEnabled ? 'text-[#22C55E]' : 'text-[#666666]'}
       />
-      <span className={cn(remoteApiEnabled ? 'text-[#FAFAFA]' : 'text-[#A1A1AA]')}>
+      <span className={remoteApiEnabled ? 'text-[#FFFFFF]' : 'text-[#666666]'}>
         Remote API
       </span>
       {remoteApiEnabled && remoteApiPort !== null && (
-        <span className="ml-auto text-[#A1A1AA] font-mono">{remoteApiPort}</span>
+        <span className="ml-auto text-[#666666] font-mono text-[11px]">{remoteApiPort}</span>
       )}
     </div>
   );

@@ -6,10 +6,9 @@ import 'xterm/css/xterm.css';
 
 export interface TerminalPaneProps {
   sessionId: UUID;
-  sessionName: string;
 }
 
-export const TerminalPane: React.FC<TerminalPaneProps> = ({ sessionId, sessionName }) => {
+export const TerminalPane: React.FC<TerminalPaneProps> = ({ sessionId }) => {
   const terminalRef = useRef<HTMLDivElement>(null);
   const term = useRef<Terminal | null>(null);
   const fitAddon = useRef<FitAddon | null>(null);
@@ -17,24 +16,27 @@ export const TerminalPane: React.FC<TerminalPaneProps> = ({ sessionId, sessionNa
 
   useEffect(() => {
     if (!terminalRef.current) return;
+    setError(null);
 
     term.current = new Terminal({
       theme: {
         background: '#09090B',
         foreground: '#A1A1AA',
       },
-      fontFamily: 'monospace',
+      fontFamily: 'JetBrains Mono, Fira Code, Menlo, Consolas, monospace',
       fontSize: 14,
+      scrollback: 10_000,
     });
     fitAddon.current = new FitAddon();
     term.current.loadAddon(fitAddon.current);
-    
+
     term.current.open(terminalRef.current);
     fitAddon.current.fit();
+    void window.kleiber.terminals.resize(sessionId, term.current.cols, term.current.rows);
 
     const onDataDisposable = term.current.onData((data: string) => {
-      window.kleiber.sessions.send(sessionId, data).catch((err: any) => {
-        if (!error) setError(err.message);
+      window.kleiber.sessions.send(sessionId, data).catch((sendError: unknown) => {
+        setError(sendError instanceof Error ? sendError.message : 'Failed to send terminal input');
       });
     });
 
@@ -55,7 +57,9 @@ export const TerminalPane: React.FC<TerminalPaneProps> = ({ sessionId, sessionNa
           term.current.write(line + '\r\n');
         }
       }
-    }).catch((err: any) => setError(err.message));
+    }).catch((readError: unknown) => {
+      setError(readError instanceof Error ? readError.message : 'Failed to read session output');
+    });
 
     const removeOutputListener = window.kleiber.terminals.onOutput(sessionId, (data: string) => {
       if (term.current) {

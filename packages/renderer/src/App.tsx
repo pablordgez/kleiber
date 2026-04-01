@@ -30,12 +30,10 @@ export const App: React.FC = () => {
   const [newSessionProjectId, setNewSessionProjectId] = useState<UUID | null>(null);
   const [newSessionParentId, setNewSessionParentId] = useState<UUID | null>(null);
 
-  // Ensure dark mode class is on html
   useEffect(() => {
     document.documentElement.classList.add('dark');
   }, []);
 
-  // Initialize: load settings + projects
   useEffect(() => {
     const init = async () => {
       try {
@@ -49,7 +47,6 @@ export const App: React.FC = () => {
     init();
   }, [loadProjects]);
 
-  // Load sessions whenever selected project changes
   useEffect(() => {
     if (selectedProjectId) {
       window.kleiber.sessions
@@ -66,7 +63,6 @@ export const App: React.FC = () => {
     return () => unsubscribe();
   }, [updateSession]);
 
-  // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 't') {
@@ -78,7 +74,6 @@ export const App: React.FC = () => {
       }
       if ((e.ctrlKey || e.metaKey) && e.key === ',') {
         e.preventDefault();
-        // Settings — placeholder for future milestone
         console.log('Settings shortcut — not yet implemented');
       }
     };
@@ -130,7 +125,7 @@ export const App: React.FC = () => {
     : {};
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-[#09090B] text-[#FAFAFA] font-sans">
+    <div className="flex h-screen w-screen overflow-hidden bg-[#000000] text-[#FFFFFF] font-sans">
       <ProjectSidebar
         remoteApiEnabled={settings?.remoteApiEnabled ?? false}
         remoteApiPort={settings?.remoteApiPort ?? null}
@@ -141,13 +136,13 @@ export const App: React.FC = () => {
         <AgentPackBanner />
 
         {selectedProject && projectSessions.length > 0 && (
-          <div className="h-[36px] shrink-0 border-b border-[#3F3F46] bg-[#18181B] px-2 flex items-center gap-1 overflow-x-auto">
+          <div className="h-9 shrink-0 border-b border-[#1C1C1C] bg-[#000000] px-3 flex items-center gap-0.5 overflow-x-auto">
             <button
               onClick={() => selectSession(null)}
-              className={`h-[28px] px-3 rounded text-xs whitespace-nowrap transition-colors ${
+              className={`h-7 px-3 rounded-lg text-xs font-medium whitespace-nowrap transition-colors ${
                 selectedSessionId === null
-                  ? 'bg-[#27272A] text-[#FAFAFA]'
-                  : 'text-[#A1A1AA] hover:text-[#FAFAFA] hover:bg-[#27272A]'
+                  ? 'bg-[#141414] text-[#FFFFFF]'
+                  : 'text-[#666666] hover:text-[#FFFFFF] hover:bg-[#0A0A0A]'
               }`}
             >
               Overview
@@ -156,19 +151,19 @@ export const App: React.FC = () => {
               <button
                 key={session.id}
                 onClick={() => selectSession(session.id)}
-                className={`h-[28px] max-w-[220px] px-3 rounded text-xs whitespace-nowrap flex items-center gap-2 transition-colors ${
+                className={`h-7 max-w-[200px] px-3 rounded-lg text-xs font-medium whitespace-nowrap flex items-center gap-2 transition-colors ${
                   selectedSessionId === session.id
-                    ? 'bg-[#27272A] text-[#FAFAFA]'
-                    : 'text-[#A1A1AA] hover:text-[#FAFAFA] hover:bg-[#27272A]'
+                    ? 'bg-[#141414] text-[#FFFFFF]'
+                    : 'text-[#666666] hover:text-[#FFFFFF] hover:bg-[#0A0A0A]'
                 }`}
               >
                 <span
-                  className={`h-2 w-2 rounded-full shrink-0 ${
+                  className={`h-1.5 w-1.5 rounded-full shrink-0 ${
                     session.state === 'running'
                       ? 'bg-[#22C55E]'
                       : session.state === 'starting'
                         ? 'bg-[#F59E0B]'
-                        : 'bg-[#A1A1AA]'
+                        : 'bg-[#666666]'
                   }`}
                 />
                 <span className="truncate">{getSessionDisplayName(session)}</span>
@@ -178,7 +173,7 @@ export const App: React.FC = () => {
         )}
 
         {!selectedProjectId ? (
-          <div className="flex-1 flex items-center justify-center text-[#A1A1AA] text-sm">
+          <div className="flex-1 flex items-center justify-center text-[#666666] text-sm">
             <p>Select a project to get started</p>
           </div>
         ) : selectedSession ? (

@@ -81,20 +81,20 @@ export const ProjectSidebar: React.FC<ProjectSidebarProps> = ({
   };
 
   return (
-    <div className="flex flex-col w-[240px] h-full bg-[#09090B] border-r border-[#3F3F46] text-[#FAFAFA] shrink-0">
-      {/* Header: new project button */}
-      <div className="p-3 border-b border-[#3F3F46]">
+    <div className="flex flex-col w-[220px] h-full bg-[#000000] border-r border-[#1C1C1C] text-[#FFFFFF] shrink-0">
+      {/* Header */}
+      <div className="px-3 pt-4 pb-3">
         <button
           onClick={() => setIsNewProjectOpen(true)}
-          className="flex items-center justify-center w-full gap-2 px-3 py-1.5 text-sm font-medium bg-[#FAFAFA] text-[#09090B] rounded-md hover:bg-[#FAFAFA]/90 transition-colors duration-150 ease-out"
+          className="flex items-center justify-center w-full gap-2 px-3 py-1.5 text-sm font-medium bg-[#FFFFFF] text-[#000000] rounded-lg hover:bg-[#E5E5E5] transition-colors"
         >
-          <Plus size={16} />
+          <Plus size={14} strokeWidth={2} />
           New Project
         </button>
       </div>
 
       {/* Tree */}
-      <div className="flex-1 overflow-y-auto py-1">
+      <div className="flex-1 overflow-y-auto px-1.5 py-1">
         {projects.map((project) => {
           const isExpanded = expandedIds.has(project.id);
           const hasChildren = sessions.some(
@@ -152,9 +152,9 @@ export const ProjectSidebar: React.FC<ProjectSidebarProps> = ({
       </div>
 
       {/* Footer */}
-      <div className="p-3 border-t border-[#3F3F46] flex flex-col gap-2">
-        <button className="flex items-center gap-2 text-sm text-[#A1A1AA] hover:text-[#FAFAFA] transition-colors duration-150 ease-out">
-          <Settings size={16} />
+      <div className="px-3 py-3 flex flex-col gap-2">
+        <button className="flex items-center gap-2 text-sm text-[#666666] hover:text-[#FFFFFF] transition-colors">
+          <Settings size={15} />
           Settings
         </button>
         <StatusBar remoteApiEnabled={remoteApiEnabled} remoteApiPort={remoteApiPort} />

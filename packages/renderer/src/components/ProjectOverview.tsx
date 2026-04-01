@@ -18,13 +18,13 @@ export interface ProjectOverviewProps {
 const getStatusIcon = (state: string): React.ReactNode => {
   switch (state) {
     case 'running':
-      return <Play size={14} className="text-[#22C55E]" />;
+      return <Play size={13} className="text-[#22C55E]" />;
     case 'exited':
-      return <XCircle size={14} className="text-[#EF4444]" />;
+      return <XCircle size={13} className="text-[#EF4444]" />;
     case 'starting':
-      return <AlertCircle size={14} className="text-[#F59E0B]" />;
+      return <AlertCircle size={13} className="text-[#F59E0B]" />;
     default:
-      return <Circle size={14} className="text-[#A1A1AA]" />;
+      return <Circle size={13} className="text-[#666666]" />;
   }
 };
 
@@ -60,100 +60,100 @@ export const ProjectOverview: React.FC<ProjectOverviewProps> = ({
   };
 
   return (
-    <div className="flex-1 overflow-y-auto bg-[#09090B] text-[#FAFAFA] p-8">
-      <div className="max-w-4xl mx-auto">
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold mb-2">{project.name}</h1>
-          <p className="text-[#A1A1AA] font-mono text-sm mb-6">{project.directoryPath}</p>
-
-          <div className="flex gap-4 mb-6">
-            <div className="bg-[#18181B] border border-[#3F3F46] rounded-lg p-4 flex-1">
-              <div className="text-[#A1A1AA] text-sm mb-1">Total Sessions</div>
-              <div className="text-2xl font-bold">{projectSessions.length}</div>
-            </div>
-            <div className="bg-[#18181B] border border-[#3F3F46] rounded-lg p-4 flex-1">
-              <div className="text-[#A1A1AA] text-sm mb-1">Running</div>
-              <div className="text-2xl font-bold text-[#22C55E]">{runningSessions.length}</div>
-            </div>
-            <div className="bg-[#18181B] border border-[#3F3F46] rounded-lg p-4 flex-1">
-              <div className="text-[#A1A1AA] text-sm mb-1">Project YOLO</div>
-              <div className="flex items-center justify-between gap-3">
-                <div
-                  className={cn(
-                    'text-2xl font-bold',
-                    project.yoloDefault ? 'text-[#F97316]' : 'text-[#A1A1AA]',
-                  )}
-                >
-                  {project.yoloDefault ? 'Enabled' : 'Disabled'}
-                </div>
-                <button
-                  type="button"
-                  onClick={() => void handleProjectYoloToggle()}
-                  disabled={isUpdatingYolo}
-                  className={cn(
-                    'rounded-md border px-3 py-1 text-xs font-medium transition',
-                    project.yoloDefault
-                      ? 'border-[#F97316]/40 text-[#FDBA74] hover:bg-[#F97316]/10'
-                      : 'border-[#3F3F46] text-[#D4D4D8] hover:bg-[#27272A]',
-                    isUpdatingYolo && 'cursor-not-allowed opacity-60',
-                  )}
-                >
-                  {isUpdatingYolo ? 'Saving…' : project.yoloDefault ? 'Disable default' : 'Enable default'}
-                </button>
-              </div>
-              <div className="mt-1 text-xs text-[#A1A1AA]">
-                New sessions inherit this default unless manually overridden.
-              </div>
-              {yoloError && <div className="mt-2 text-xs text-[#FCA5A5]">{yoloError}</div>}
-            </div>
-          </div>
-
-          <button
-            onClick={onNewSession}
-            className="flex items-center gap-2 bg-[#FAFAFA] text-[#09090B] px-4 py-2 rounded-md font-medium hover:bg-[#FAFAFA]/90 transition-colors duration-150 ease-out"
-          >
-            <Terminal size={18} />
-            New Session
-          </button>
+    <div className="flex-1 overflow-y-auto bg-[#000000] text-[#FFFFFF] p-10">
+      <div className="max-w-2xl mx-auto">
+        <div className="mb-10">
+          <h1 className="text-2xl font-semibold mb-1 tracking-tight">{project.name}</h1>
+          <p className="text-[#666666] font-mono text-xs">{project.directoryPath}</p>
         </div>
 
-        <div className="bg-[#18181B] border border-[#3F3F46] rounded-lg overflow-hidden">
-          <div className="px-4 py-3 border-b border-[#3F3F46] bg-[#27272A]/50 font-medium text-sm">
+        <div className="grid grid-cols-3 gap-3 mb-8">
+          <div className="rounded-lg bg-[#0A0A0A] p-4">
+            <div className="text-[#666666] text-xs mb-2">Sessions</div>
+            <div className="text-xl font-semibold">{projectSessions.length}</div>
+          </div>
+          <div className="rounded-lg bg-[#0A0A0A] p-4">
+            <div className="text-[#666666] text-xs mb-2">Running</div>
+            <div className="text-xl font-semibold text-[#22C55E]">{runningSessions.length}</div>
+          </div>
+          <div className="rounded-lg bg-[#0A0A0A] p-4">
+            <div className="text-[#666666] text-xs mb-2">YOLO Default</div>
+            <div className="flex items-center justify-between gap-2">
+              <span
+                className={cn(
+                  'text-xl font-semibold',
+                  project.yoloDefault ? 'text-[#F97316]' : 'text-[#666666]',
+                )}
+              >
+                {project.yoloDefault ? 'On' : 'Off'}
+              </span>
+              <button
+                type="button"
+                onClick={() => void handleProjectYoloToggle()}
+                disabled={isUpdatingYolo}
+                className={cn(
+                  'rounded-lg px-2.5 py-1 text-xs font-medium transition-colors',
+                  project.yoloDefault
+                    ? 'text-[#F97316] hover:bg-[#F97316]/10'
+                    : 'text-[#666666] hover:bg-[#141414]',
+                  isUpdatingYolo && 'cursor-not-allowed opacity-50',
+                )}
+              >
+                {isUpdatingYolo ? 'Saving…' : project.yoloDefault ? 'Disable' : 'Enable'}
+              </button>
+            </div>
+            <div className="mt-1.5 text-[11px] text-[#666666] leading-tight">
+              New sessions inherit this default.
+            </div>
+            {yoloError && <div className="mt-2 text-xs text-[#EF4444]">{yoloError}</div>}
+          </div>
+        </div>
+
+        <button
+          onClick={onNewSession}
+          className="flex items-center gap-2 bg-[#FFFFFF] text-[#000000] px-4 py-2 rounded-lg text-sm font-medium hover:bg-[#E5E5E5] transition-colors mb-8"
+        >
+          <Terminal size={15} />
+          New Session
+        </button>
+
+        <div className="rounded-lg border border-[#1C1C1C] overflow-hidden">
+          <div className="px-4 py-2.5 border-b border-[#1C1C1C] text-xs font-medium text-[#666666] uppercase tracking-wider">
             Sessions
           </div>
           {projectSessions.length === 0 ? (
-            <div className="p-8 text-center text-[#A1A1AA] text-sm">
+            <div className="p-10 text-center text-[#666666] text-sm">
               No sessions yet. Create one to get started.
             </div>
           ) : (
-            <div className="divide-y divide-[#3F3F46]">
+            <div className="divide-y divide-[#1C1C1C]">
               {projectSessions.map((session) => (
                 <div
                   key={session.id}
                   onClick={() => onSelectSession(session.id)}
-                  className="flex items-center justify-between p-4 hover:bg-[#27272A] cursor-pointer transition-colors duration-150 ease-out"
+                  className="flex items-center justify-between px-4 py-3 hover:bg-[#0A0A0A] cursor-pointer transition-colors"
                 >
                   <div className="flex items-center gap-3">
                     {getStatusIcon(session.state)}
-                    <span className="font-medium text-sm">{getSessionDisplayName(session)}</span>
+                    <span className="text-sm font-medium">{getSessionDisplayName(session)}</span>
                     {session.cli && (
-                      <span className="px-2 py-0.5 text-xs bg-[#27272A] border border-[#3F3F46] rounded text-[#A1A1AA]">
+                      <span className="px-1.5 py-0.5 text-[11px] bg-[#0A0A0A] rounded-lg text-[#666666]">
                         {session.cli}
                       </span>
                     )}
                     {session.role && (
-                      <span className="px-2 py-0.5 text-xs bg-[#27272A] border border-[#3F3F46] rounded text-[#A1A1AA]">
+                      <span className="px-1.5 py-0.5 text-[11px] bg-[#0A0A0A] rounded-lg text-[#666666]">
                         {session.role}
                       </span>
                     )}
                   </div>
-                  <div className="flex items-center gap-4 text-sm text-[#A1A1AA]">
+                  <div className="flex items-center gap-3 text-sm text-[#666666]">
                     {session.yolo && (
-                      <span className="text-[#F97316] font-bold text-xs border border-[#F97316]/30 px-1.5 py-0.5 rounded">
+                      <span className="text-[#F97316] font-semibold text-[10px] border border-[#F97316]/25 px-1.5 py-0.5 rounded uppercase tracking-wide">
                         YOLO
                       </span>
                     )}
-                    <span className="font-mono text-xs">{session.state}</span>
+                    <span className="font-mono text-[11px]">{session.state}</span>
                   </div>
                 </div>
               ))}

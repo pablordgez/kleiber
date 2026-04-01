@@ -25,14 +25,14 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
   const breadcrumbs = [projectName, ...ancestorNames, sessionName];
 
   return (
-    <div className="h-[32px] w-full bg-[#18181B] border-b border-[#3F3F46] flex items-center px-4 justify-between select-none shrink-0">
+    <div className="h-9 w-full bg-[#000000] border-b border-[#1C1C1C] flex items-center px-4 justify-between select-none shrink-0">
       {/* Left: breadcrumb + badges */}
       <div className="flex items-center gap-2 overflow-hidden">
-        <div className="flex items-center text-sm text-[#A1A1AA] truncate">
+        <div className="flex items-center text-[13px] text-[#666666] truncate">
           {breadcrumbs.map((crumb, idx) => (
             <React.Fragment key={idx}>
-              {idx > 0 && <span className="mx-1 text-[#3F3F46]">›</span>}
-              <span className={idx === breadcrumbs.length - 1 ? 'text-[#FAFAFA]' : ''}>
+              {idx > 0 && <span className="mx-1.5 text-[#333333]">/</span>}
+              <span className={idx === breadcrumbs.length - 1 ? 'text-[#FFFFFF] font-medium' : ''}>
                 {crumb}
               </span>
             </React.Fragment>
@@ -40,45 +40,45 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
         </div>
 
         {session.cli && (
-          <span className="px-2 py-0.5 text-[10px] font-mono uppercase tracking-wider bg-[#27272A] text-[#A1A1AA] rounded-full border border-[#3F3F46] shrink-0">
+          <span className="px-1.5 py-0.5 text-[10px] font-mono text-[#666666] bg-[#0A0A0A] rounded-lg shrink-0">
             {session.cli}
           </span>
         )}
 
         {session.yolo && (
-          <span className="px-2 py-0.5 text-[10px] font-bold text-[#F97316] border border-[#F97316]/30 rounded-full shrink-0">
+          <span className="px-1.5 py-0.5 text-[9px] font-semibold text-[#F97316] border border-[#F97316]/25 rounded shrink-0 uppercase tracking-wide">
             YOLO
           </span>
         )}
       </div>
 
       {/* Right: kill + more */}
-      <div className="flex items-center gap-2 shrink-0">
+      <div className="flex items-center gap-1 shrink-0">
         <Popover.Root>
           <Popover.Trigger asChild>
-            <button className="text-xs text-[#EF4444] hover:bg-[#EF4444]/10 px-2 py-1 rounded transition-colors duration-150 ease-out flex items-center gap-1">
-              <X size={14} />
+            <button className="text-xs text-[#EF4444] hover:bg-[#EF4444]/10 px-2 py-1 rounded-lg transition-colors flex items-center gap-1">
+              <X size={13} />
               Kill
             </button>
           </Popover.Trigger>
           <Popover.Portal>
             <Popover.Content
-              className="bg-[#18181B] border border-[#3F3F46] rounded-md p-4 z-50 w-64"
-              sideOffset={5}
+              className="bg-[#0A0A0A] border border-[#1C1C1C] rounded-lg p-4 z-50 w-60 shadow-xl shadow-black/50"
+              sideOffset={4}
             >
-              <p className="text-sm text-[#FAFAFA] mb-4">
-                Are you sure you want to kill this session?
+              <p className="text-sm text-[#FFFFFF] mb-4">
+                Kill this session?
               </p>
               <div className="flex justify-end gap-2">
                 <Popover.Close asChild>
-                  <button className="px-3 py-1.5 text-xs text-[#A1A1AA] hover:bg-[#27272A] rounded transition-colors">
+                  <button className="px-3 py-1.5 text-xs text-[#666666] hover:bg-[#141414] rounded-lg transition-colors">
                     Cancel
                   </button>
                 </Popover.Close>
                 <Popover.Close asChild>
                   <button
                     onClick={onKill}
-                    className="px-3 py-1.5 text-xs bg-[#EF4444] text-white hover:bg-[#EF4444]/90 rounded transition-colors"
+                    className="px-3 py-1.5 text-xs bg-[#EF4444] text-white hover:bg-[#DC2626] rounded-lg transition-colors"
                   >
                     Kill Session
                   </button>
@@ -90,16 +90,16 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
 
         <DropdownMenu.Root>
           <DropdownMenu.Trigger asChild>
-            <button className="text-[#A1A1AA] hover:text-[#FAFAFA] hover:bg-[#27272A] p-1 rounded transition-colors duration-150 ease-out">
-              <MoreHorizontal size={16} />
+            <button className="text-[#666666] hover:text-[#FFFFFF] hover:bg-[#0A0A0A] p-1 rounded-lg transition-colors">
+              <MoreHorizontal size={15} />
             </button>
           </DropdownMenu.Trigger>
           <DropdownMenu.Portal>
             <DropdownMenu.Content
-              className="min-w-[160px] bg-[#18181B] border border-[#3F3F46] rounded-md p-1 z-50"
-              sideOffset={5}
+              className="min-w-[160px] bg-[#0A0A0A] border border-[#1C1C1C] rounded-lg p-1 z-50 shadow-xl shadow-black/50"
+              sideOffset={4}
             >
-              <DropdownMenu.Item className="flex items-center px-2 py-1.5 text-sm text-[#FAFAFA] hover:bg-[#27272A] focus:bg-[#27272A] rounded outline-none cursor-pointer">
+              <DropdownMenu.Item className="flex items-center px-2 py-1.5 text-[13px] text-[#FFFFFF] hover:bg-[#141414] focus:bg-[#141414] rounded-lg outline-none cursor-pointer transition-colors">
                 Clear Terminal
               </DropdownMenu.Item>
             </DropdownMenu.Content>

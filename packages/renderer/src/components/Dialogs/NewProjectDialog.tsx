@@ -45,64 +45,64 @@ export const NewProjectDialog: React.FC<NewProjectDialogProps> = ({
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 bg-[#09090B]/80 backdrop-blur-sm z-40" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-md bg-[#18181B] border border-[#3F3F46] rounded-lg z-50 p-6">
-          <div className="flex items-center justify-between mb-4">
-            <Dialog.Title className="text-lg font-medium text-[#FAFAFA]">
+        <Dialog.Overlay className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40" />
+        <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[420px] bg-[#0A0A0A] border border-[#1C1C1C] rounded-lg z-50 p-6 shadow-xl shadow-black/50">
+          <div className="flex items-center justify-between mb-5">
+            <Dialog.Title className="text-base font-semibold text-[#FFFFFF]">
               New Project
             </Dialog.Title>
-            <Dialog.Close className="text-[#A1A1AA] hover:text-[#FAFAFA] rounded-sm opacity-70 hover:opacity-100 transition-opacity">
-              <X size={20} />
+            <Dialog.Close className="text-[#666666] hover:text-[#FFFFFF] rounded-lg p-0.5 transition-colors">
+              <X size={18} />
             </Dialog.Close>
           </div>
 
           <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-            <div className="flex flex-col gap-2">
-              <label htmlFor="proj-name" className="text-sm font-medium text-[#FAFAFA]">
+            <div className="flex flex-col gap-1.5">
+              <label htmlFor="proj-name" className="text-[13px] font-medium text-[#FFFFFF]">
                 Name
               </label>
               <input
                 id="proj-name"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                className="flex h-10 w-full rounded-md border border-[#3F3F46] bg-[#09090B] px-3 py-2 text-sm text-[#FAFAFA] placeholder:text-[#A1A1AA] focus:outline-none focus:border-[#FAFAFA]"
+                className="flex h-9 w-full rounded-lg border border-[#1C1C1C] bg-[#000000] px-3 py-2 text-sm text-[#FFFFFF] placeholder:text-[#444444] focus:outline-none focus:border-[#333333] transition-colors"
                 placeholder="My Awesome Project"
                 required
               />
             </div>
 
-            <div className="flex flex-col gap-2">
-              <label htmlFor="proj-directory" className="text-sm font-medium text-[#FAFAFA]">
+            <div className="flex flex-col gap-1.5">
+              <label htmlFor="proj-directory" className="text-[13px] font-medium text-[#FFFFFF]">
                 Directory Path
               </label>
               <input
                 id="proj-directory"
                 value={directoryPath}
                 onChange={(e) => setDirectoryPath(e.target.value)}
-                className="flex h-10 w-full rounded-md border border-[#3F3F46] bg-[#09090B] px-3 py-2 text-sm text-[#FAFAFA] placeholder:text-[#A1A1AA] focus:outline-none focus:border-[#FAFAFA]"
+                className="flex h-9 w-full rounded-lg border border-[#1C1C1C] bg-[#000000] px-3 py-2 text-sm text-[#FFFFFF] placeholder:text-[#444444] focus:outline-none focus:border-[#333333] transition-colors"
                 placeholder="/path/to/project"
                 required
               />
             </div>
 
-            <div className="flex items-center gap-2 mt-2">
+            <div className="flex items-center gap-2 mt-1">
               <input
                 type="checkbox"
                 id="proj-yolo"
                 checked={yoloDefault}
                 onChange={(e) => setYoloDefault(e.target.checked)}
-                className="h-4 w-4 rounded border-[#3F3F46] bg-[#09090B]"
+                className="h-4 w-4 rounded border-[#1C1C1C] bg-[#000000] accent-white"
               />
-              <label htmlFor="proj-yolo" className="text-sm font-medium text-[#FAFAFA]">
+              <label htmlFor="proj-yolo" className="text-[13px] font-medium text-[#FFFFFF]">
                 Enable YOLO mode by default
               </label>
             </div>
 
-            <div className="flex justify-end gap-3 mt-4">
+            <div className="flex justify-end gap-2 mt-3 pt-3 border-t border-[#1C1C1C]">
               <Dialog.Close asChild>
                 <button
                   type="button"
-                  className="px-4 py-2 text-sm font-medium text-[#FAFAFA] hover:bg-[#27272A] rounded-md transition-colors"
+                  className="px-4 py-2 text-sm font-medium text-[#666666] hover:text-[#FFFFFF] hover:bg-[#141414] rounded-lg transition-colors"
                 >
                   Cancel
                 </button>
@@ -110,7 +110,7 @@ export const NewProjectDialog: React.FC<NewProjectDialogProps> = ({
               <button
                 type="submit"
                 disabled={isSubmitting || !name || !directoryPath}
-                className="px-4 py-2 text-sm font-medium bg-[#FAFAFA] text-[#09090B] hover:bg-[#FAFAFA]/90 rounded-md transition-colors disabled:opacity-50"
+                className="px-4 py-2 text-sm font-medium bg-[#FFFFFF] text-[#000000] hover:bg-[#E5E5E5] rounded-lg transition-colors disabled:opacity-40"
               >
                 {isSubmitting ? 'Creating...' : 'Create Project'}
               </button>

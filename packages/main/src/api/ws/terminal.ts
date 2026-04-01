@@ -1,5 +1,4 @@
 import type { FastifyInstance } from "fastify";
-import { WebSocket } from "ws";
 
 import { verifyAuthToken } from "../auth";
 import type { RemoteApiSessionManager } from "../types";
@@ -12,13 +11,33 @@ interface WsContext {
   authenticatedUser: string | null;
 }
 
-function sendJson(socket: WebSocket, payload: unknown): void {
+interface WebSocketLike {
+  readonly readyState: number;
+  send(payload: string): void;
+  close(code: number, reason: string): void;
+  terminate?(): void;
+  once(event: string, listener: (...args: unknown[]) => void): void;
+  on(event: string, listener: (...args: unknown[]) => void): void;
+}
+
+const SOCKET_CONNECTING = 0;
+const SOCKET_OPEN = 1;
+const SOCKET_CLOSED = 3;
+
+function sendJson(socket: WebSocketLike, payload: unknown): void {
   socket.send(JSON.stringify(payload));
 }
 
-function closeSocket(socket: WebSocket, code: number, reason: string): void {
-  if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) {
+function closeSocket(socket: WebSocketLike, code: number, reason: string): void {
+  if (socket.readyState === SOCKET_OPEN || socket.readyState === SOCKET_CONNECTING) {
     socket.close(code, reason);
+    if (typeof socket.terminate === "function") {
+      setTimeout(() => {
+        if (socket.readyState !== SOCKET_CLOSED) {
+          socket.terminate?.();
+        }
+      }, 50).unref();
+    }
   }
 }
 
@@ -93,7 +112,7 @@ export async function registerTerminalWebSocketRoutes(
   }
 
   function attachAuthenticationGate(
-    socket: WebSocket,
+    socket: WebSocketLike,
     onAuthenticated: (username: string) => void,
   ): void {
     const context: WsContext = { authenticatedUser: null };
@@ -216,7 +235,7 @@ export async function registerTerminalWebSocketRoutes(
           return;
         }
 
-        socket.on("message", (rawMessage) => {
+        socket.on("message", (rawMessage: unknown) => {
           const messageSize = Buffer.byteLength(
             typeof rawMessage === "string" ? rawMessage : Buffer.isBuffer(rawMessage) ? rawMessage : Buffer.from(String(rawMessage)),
           );

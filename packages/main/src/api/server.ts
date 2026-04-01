@@ -67,6 +67,8 @@ async function canListenOnPort(port: number, host: string): Promise<boolean> {
 }
 
 export async function buildRemoteApiApp(options: BuildRemoteApiAppOptions): Promise<FastifyInstance> {
+  const maxWebSocketPayload =
+    options.websocket?.maxPayloadBytes ?? DEFAULT_MAX_WS_PAYLOAD_BYTES;
   const app = Fastify({
     bodyLimit: 1_000_000,
     logger: false,
@@ -79,7 +81,7 @@ export async function buildRemoteApiApp(options: BuildRemoteApiAppOptions): Prom
   });
   await app.register(websocket, {
     options: {
-      maxPayload: options.websocket?.maxPayloadBytes ?? DEFAULT_MAX_WS_PAYLOAD_BYTES,
+      maxPayload: maxWebSocketPayload,
     },
   });
 
@@ -142,14 +144,21 @@ export async function buildRemoteApiApp(options: BuildRemoteApiAppOptions): Prom
     createSessionResolver: options.createSessionResolver,
     ...(options.mcpRuntime ? { mcpRuntime: options.mcpRuntime } : {}),
   });
-  await registerTerminalWebSocketRoutes(app, {
+  const websocketRouteOptions = {
     sessionManager: options.sessionManager,
     signingKey: options.signingKey,
-    now: options.now,
-    authTimeoutMs: options.websocket?.authTimeoutMs,
-    maxConnectionsPerUser: options.websocket?.maxConnectionsPerUser,
-    maxPayloadBytes: options.websocket?.maxPayloadBytes,
-  });
+    ...(options.now ? { now: options.now } : {}),
+    ...(options.websocket?.authTimeoutMs !== undefined
+      ? { authTimeoutMs: options.websocket.authTimeoutMs }
+      : {}),
+    ...(options.websocket?.maxConnectionsPerUser !== undefined
+      ? { maxConnectionsPerUser: options.websocket.maxConnectionsPerUser }
+      : {}),
+    ...(options.websocket?.maxPayloadBytes !== undefined
+      ? { maxPayloadBytes: options.websocket.maxPayloadBytes }
+      : {}),
+  };
+  await registerTerminalWebSocketRoutes(app, websocketRouteOptions);
 
   app.get("/status", async (request) => {
     return {

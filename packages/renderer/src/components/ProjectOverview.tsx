@@ -53,14 +53,17 @@ export const ProjectOverview: React.FC<ProjectOverviewProps> = ({
               <div className="text-2xl font-bold text-[#22C55E]">{runningSessions.length}</div>
             </div>
             <div className="bg-[#18181B] border border-[#3F3F46] rounded-lg p-4 flex-1">
-              <div className="text-[#A1A1AA] text-sm mb-1">YOLO Default</div>
+              <div className="text-[#A1A1AA] text-sm mb-1">Project YOLO</div>
               <div
                 className={cn(
                   'text-2xl font-bold',
                   project.yoloDefault ? 'text-[#F97316]' : 'text-[#A1A1AA]',
                 )}
               >
-                {project.yoloDefault ? 'Yes' : 'No'}
+                {project.yoloDefault ? 'Enabled' : 'Disabled'}
+              </div>
+              <div className="mt-1 text-xs text-[#A1A1AA]">
+                New sessions inherit this default unless manually overridden.
               </div>
             </div>
           </div>

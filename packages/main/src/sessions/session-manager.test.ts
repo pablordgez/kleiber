@@ -1,8 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   SessionManager,
   type Disposable,
+  type McpWrapperFactory,
   type PtyExitEvent,
   type PtyFactory,
   type PtyProcess,
@@ -88,6 +89,23 @@ function createManager(factory: PtyFactory, outputBufferSize = 5): SessionManage
     ptyFactory: factory,
     outputBufferSize,
   });
+}
+
+class FakeMcpWrapperFactory {
+  readonly created: Array<{ sessionId: string; projectId: string; dispose: ReturnType<typeof vi.fn> }> = [];
+  #nextPid = 9_000;
+
+  readonly factory: McpWrapperFactory = async ({ sessionId, projectId }) => {
+    const dispose = vi.fn();
+    this.created.push({ sessionId, projectId, dispose });
+    const pid = this.#nextPid;
+    this.#nextPid += 1;
+
+    return {
+      pid,
+      dispose,
+    };
+  };
 }
 
 describe("SessionManager", () => {
@@ -210,5 +228,43 @@ it("session-exited is emitted when the PTY exits within 1s", async () => {
 
   await expect(exitEvent).resolves.toEqual({ sessionId: session.id, exitCode: 7 });
   expect(manager.getSession(session.id)?.state).toBe("exited");
+});
+
+it("starts and disposes MCP wrappers for MCP-enabled agent sessions", async () => {
+  const fakeFactory = new FakePtyFactory();
+  const fakeMcpFactory = new FakeMcpWrapperFactory();
+  const manager = new SessionManager({
+    ptyFactory: fakeFactory.factory,
+    outputBufferSize: 5,
+    mcpWrapperFactory: fakeMcpFactory.factory,
+  });
+
+  const session = await manager.createSession({
+    projectId: "project-1",
+    type: "agent",
+    cli: "claude",
+    workingDirectory: "/tmp",
+    mcpEnabled: true,
+    mcpLaunchConfig: {
+      injectionMethod: "env",
+      wrapperCommand: process.execPath,
+      wrapperArgs: ["/tmp/fake-wrapper.js"],
+    },
+    launch: {
+      command: "claude",
+      args: [],
+      env: {},
+    },
+  });
+
+  expect(fakeMcpFactory.created).toHaveLength(1);
+  expect(fakeMcpFactory.created[0]).toMatchObject({
+    sessionId: session.id,
+    projectId: "project-1",
+  });
+  expect(session.mcpWrapperId).toBe(9_000);
+
+  fakeFactory.created[0]?.emitExit({ exitCode: 0, signal: null });
+  expect(fakeMcpFactory.created[0]?.dispose).toHaveBeenCalledTimes(1);
 });
 });

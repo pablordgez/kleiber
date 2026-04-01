@@ -1,3 +1,4 @@
+import net from "node:net";
 import { stdin, stdout } from "node:process";
 
 import { MCP_TOOL_DEFINITIONS, MCP_PROTOCOL_VERSION, type JsonSchema } from "./schemas";
@@ -122,6 +123,84 @@ function createProcessBridge(): ParentBridge {
   };
 }
 
+function createSocketBridge(socketPath: string): ParentBridge {
+  const socket = net.createConnection(socketPath);
+  const listeners = new Set<(message: unknown) => void>();
+  const queue: string[] = [];
+  let connected = false;
+  let buffer = "";
+
+  socket.setEncoding("utf8");
+  socket.on("connect", () => {
+    connected = true;
+    for (const payload of queue.splice(0)) {
+      socket.write(payload);
+    }
+  });
+  socket.on("data", (chunk) => {
+    buffer += String(chunk);
+    while (true) {
+      const newlineIndex = buffer.indexOf("\n");
+      if (newlineIndex === -1) {
+        return;
+      }
+
+      const line = buffer.slice(0, newlineIndex).trim();
+      buffer = buffer.slice(newlineIndex + 1);
+      if (!line) {
+        continue;
+      }
+
+      try {
+        const message = JSON.parse(line);
+        for (const listener of listeners) {
+          listener(message);
+        }
+      } catch {
+        // Ignore malformed socket payloads from the parent bridge.
+      }
+    }
+  });
+
+  return {
+    send: (message) => {
+      const payload = `${JSON.stringify(message)}\n`;
+      if (connected) {
+        socket.write(payload);
+        return true;
+      }
+
+      queue.push(payload);
+      return true;
+    },
+    onMessage: (listener) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+        if (listeners.size === 0) {
+          socket.destroy();
+        }
+      };
+    },
+  };
+}
+
+function createDefaultBridge(): ParentBridge {
+  if (typeof process.send === "function") {
+    return createProcessBridge();
+  }
+
+  const socketPath = process.env.KLEIBER_MCP_SOCKET_PATH;
+  if (socketPath) {
+    return createSocketBridge(socketPath);
+  }
+
+  return {
+    send: () => false,
+    onMessage: () => () => {},
+  };
+}
+
 export class McpStdioWrapper {
   readonly #bridge: ParentBridge;
   readonly #streams: WrapperStreams;
@@ -137,7 +216,7 @@ export class McpStdioWrapper {
   #orchestratorCapabilities: unknown;
 
   constructor(options: McpStdioWrapperOptions = {}) {
-    this.#bridge = options.bridge ?? createProcessBridge();
+    this.#bridge = options.bridge ?? createDefaultBridge();
     this.#streams = options.streams ?? { input: stdin, output: stdout };
     this.#context = resolveContext(options.context);
     this.#requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;

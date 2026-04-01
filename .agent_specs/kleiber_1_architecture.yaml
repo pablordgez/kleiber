@@ -1,0 +1,498 @@
+metadata:
+  project: kleiber
+  version: "1.0"
+  date: "2026-04-01"
+  author: "Architect agent (assisted by Claude)"
+  source_requirements: "kleiber_2_requirements_final.md"
+  status: approved
+
+inputs:
+  key_constraints:
+    - Desktop framework is fixed as Electron (requirement constraint)
+    - Terminal emulator is fixed as xterm.js (requirement constraint)
+    - Cross-platform: Linux, macOS, Windows
+    - Single-user, runs locally
+    - HTTP only for remote API (no built-in TLS)
+    - coding-agent-pack bundled inside app, not forked
+    - No session logging or scrollback persistence
+  key_requirements:
+    - Hybrid MCP architecture: stdio wrappers per session + central orchestrator in main process
+    - PTY-backed terminal sessions (plain, agent, agent+role)
+    - Project > Session > Sub-session hierarchy with real-time updates
+    - Yolo mode with downward inheritance enforcement in central orchestrator
+    - Remote HTTP API + WebSocket for streaming + mobile-friendly web UI
+    - OS notifications on desktop for session exit events
+    - Port auto-selection with collision avoidance starting at 9100
+    - Credentials via Electron safeStorage (OS keychain)
+
+decision_summary: >
+  Kleiber is structured as a standard Electron app with a TypeScript-first monorepo.
+  The main process owns all stateful concerns: PTY lifecycle, MCP orchestration, HTTP server,
+  and persistence. The renderer process is a React UI communicating with main via contextBridge IPC.
+  Each agent session gets a stdio-based MCP wrapper process launched by the agent CLI itself using
+  CLI-native MCP configuration. That wrapper proxies to the central orchestrator in the main process
+  over a per-session IPC socket, giving agents native stdio MCP while the orchestrator maintains
+  global session state and enforces yolo inheritance. The remote web UI is a Vite-built React
+  bundle served as static files by the same Fastify server that hosts the REST+WebSocket API.
+
+recommended_architecture:
+  pattern: Electron multi-process with central main-process orchestrator
+  process_model:
+    main_process:
+      runtime: Node.js (bundled by Electron)
+      responsibilities:
+        - PTY process lifecycle (spawn, resize, kill, cascade-kill descendants)
+        - Session state registry (in-memory, authoritative source of truth)
+        - MCP central orchestration service (receives proxied tool calls, enforces rules)
+        - HTTP/WebSocket server (remote API + static web UI bundle)
+        - Persistence (electron-store for project list, settings; safeStorage for credentials)
+        - Agent pack manager (global install detection, installer execution)
+        - OS notification dispatch
+        - Port probe and bind for remote API
+    renderer_process:
+      runtime: Chromium with React 18
+      responsibilities:
+        - Project/session sidebar tree (real-time via IPC)
+        - xterm.js terminal pane area (tabs + split panes with drag resize)
+        - Quick-launch session creation dialog
+        - Settings UI
+        - Status bar (session count, remote API port, yolo warnings)
+      communication: Electron contextBridge (no nodeIntegration in renderer)
+    preload_scripts:
+      purpose: Expose safe IPC API surface to renderer via contextBridge
+      pattern: >
+        window.kleiber = { projects, sessions, terminals, settings, pack } —
+        each namespace exposes typed invoke/on wrappers
+    mcp_stdio_wrappers:
+      type: CLI-launched stdio subprocesses (one per agent session with MCP enabled)
+      purpose: >
+        Present a stdio-based MCP server to the agent CLI. Reads MCP JSON-RPC from stdin,
+        proxies to the main-process orchestrator over a per-session IPC socket,
+        writes responses back to stdout.
+      lifecycle: Spawned by the agent CLI when the session starts (MCP enabled); exits with the agent session
+      security: >
+        Wrapper has no direct PTY or session-state access. All enforcement
+        (yolo inheritance, project scoping) happens in the central orchestrator.
+    remote_web_ui:
+      type: React 18 SPA, Vite-built, served as static bundle by Fastify
+      communication: REST for project/session metadata; WebSocket for terminal streaming and input
+
+  data_flow:
+    terminal_output_desktop: >
+      PTY (node-pty) → main process buffer → IPC (ipcRenderer.on) → renderer →
+      xterm.js instance (write)
+    terminal_output_remote: >
+      PTY (node-pty) → main process buffer → WebSocket broadcast → web client →
+      xterm.js (in browser)
+    terminal_input_desktop: >
+      User keystroke in xterm.js → renderer → IPC (ipcRenderer.invoke) → main →
+      PTY.write()
+    terminal_input_remote: >
+      User input in web UI → WebSocket message → Fastify handler → main →
+      PTY.write()
+    terminal_input_mcp: >
+      Agent calls send_to_session → MCP wrapper stdin → IPC → orchestrator →
+      PTY.write()
+    mcp_tool_call: >
+      Agent CLI → MCP JSON-RPC on wrapper's stdin → wrapper IPC → orchestrator in main →
+      validate (yolo, project scope) → execute → IPC reply → wrapper stdout → agent CLI
+    session_events_to_ui: >
+      Session state change in main → ipcMain.emit → renderer IPC handler → Zustand store update →
+      React re-render (session tree)
+
+alternatives_considered:
+  - name: Tauri (Rust backend)
+    verdict: rejected
+    reason: Ruled out by explicit requirement constraint (Electron mandated)
+
+  - name: Preact for remote web UI
+    verdict: rejected_for_now
+    reason: >
+      Would reduce mobile bundle size (~3KB vs ~45KB) but prevents sharing React
+      component code and TypeScript types with the desktop renderer. Acceptable trade-off
+      to revisit in v2 if mobile performance becomes a concern.
+
+  - name: SQLite (better-sqlite3) for persistence
+    verdict: deferred
+    reason: >
+      ACID and relational queries are overkill for the current data model (project list +
+      key-value settings). electron-store is simpler and avoids native binary packaging
+      complexity. Migrate to SQLite if the data model grows.
+
+  - name: Express for HTTP server
+    verdict: rejected
+    reason: >
+      Fastify is faster, TypeScript-native, and has a cleaner WebSocket plugin.
+      No meaningful ecosystem advantage of Express for this use case.
+
+  - name: Socket.io for WebSocket
+    verdict: deferred
+    reason: >
+      Auto-reconnect and rooms are nice but add client-side weight to the mobile web UI.
+      ws via @fastify/websocket is sufficient for v1. Revisit if reconnection UX becomes a pain point.
+
+  - name: tRPC for type-safe API
+    verdict: rejected
+    reason: >
+      Adds setup complexity and a build-time dependency between server and client.
+      Shared TypeScript interfaces + REST + WebSocket achieves type safety with less overhead
+      for a limited, local API surface.
+
+stack:
+  runtime:
+    desktop: Electron (latest stable, currently 34.x)
+    language: TypeScript 5.x (strict mode throughout)
+    node_version: Bundled by Electron (currently Node 22.x)
+
+  desktop_ui:
+    framework: React 18
+    state_management: Zustand
+    terminal_renderer: xterm.js + xterm-addon-fit + xterm-addon-web-links
+    split_panes: allotment (React split pane library, xterm-compatible)
+    styling: CSS Modules or Tailwind CSS (dark theme default)
+
+  build_and_tooling:
+    bundler: electron-vite
+    packager: electron-builder
+    package_manager: pnpm (workspaces for monorepo)
+    linter: ESLint + @typescript-eslint
+    formatter: Prettier
+
+  main_process:
+    pty: node-pty
+    persistence: electron-store
+    credential_storage: Electron safeStorage (OS keychain)
+    http_server: Fastify
+    websocket: "@fastify/websocket"
+    auth_tokens: jose (JWT HS256, symmetric, in-memory token registry)
+    ansi_stripping: strip-ansi (for read_session plain mode)
+    process_spawn: child_process.fork (MCP wrappers), child_process.spawn (installers)
+
+  remote_web_ui:
+    framework: React 18
+    bundler: Vite (output served as static files by Fastify)
+    terminal_renderer: xterm.js (same library, loaded in browser)
+    http_client: fetch (native)
+    websocket_client: native WebSocket API
+    styling: Tailwind CSS (mobile-first, shared config)
+
+  testing:
+    unit: Vitest
+    e2e: Playwright (with @playwright/test electron integration)
+    coverage: Istanbul (via Vitest)
+
+major_components:
+  - name: SessionManager
+    location: src/main/sessions/
+    responsibilities:
+      - In-memory session registry (Map<sessionId, SessionRecord>)
+      - PTY spawn, resize, kill, cascade-kill
+      - Session state transitions (starting → running → exited)
+      - Yolo flag resolution (enforces inheritance at spawn time)
+      - Event emission for IPC and WebSocket broadcast
+    key_types:
+      SessionRecord:
+        fields:
+          - id: string (uuid)
+          - projectId: string
+          - parentSessionId: string | null
+          - type: plain | agent | agent_role
+          - cli: string | null
+          - role: string | null
+          - yolo: boolean
+          - state: starting | running | exited
+          - exitCode: number | null
+          - pty: IPty (node-pty handle)
+          - outputBuffer: CircularBuffer<string> (last N lines for read_session)
+
+  - name: McpOrchestrator
+    location: src/main/mcp/orchestrator.ts
+    responsibilities:
+      - Receives proxied tool calls from stdio wrappers via IPC
+      - Validates tool parameters (project scope, cli/role existence, yolo rules)
+      - Dispatches to SessionManager for spawn/send/read/list/kill operations
+      - Returns typed MCP responses
+      - Exposes MCP capabilities with version identifier
+    tool_handlers:
+      - spawn_session
+      - send_to_session
+      - read_session
+      - list_sessions
+      - kill_session
+
+  - name: McpStdioWrapper
+    location: src/main/mcp/stdio-wrapper.ts
+    responsibilities:
+      - Standalone Node.js script, launched by the agent CLI as a stdio MCP server
+      - Implements MCP JSON-RPC protocol on stdin/stdout
+      - Proxies all tool calls to McpOrchestrator via IPC socket messages
+      - Has no direct access to session state or PTY
+    launch_context:
+      - Receives sessionId and projectId as environment variables
+      - Receives IPC socket path as an environment variable
+      - These are used to tag all outgoing tool call proxies and connect to the main-process bridge
+
+  - name: AgentPackManager
+    location: src/main/pack/
+    responsibilities:
+      - Detect global installation (check ~/.agents/skills/requirements-engineer/)
+      - Run OS-appropriate installer (install.sh / install_macos.sh / install.ps1)
+      - Read available agent roles from bundled pack's shared/.agents/skills/
+      - Read and parse agent_pack_config.yaml from project .agent_specs/ if present
+      - Provide harness adapter config (launch command, yolo flag, MCP injection method per CLI)
+
+  - name: RemoteApiServer
+    location: src/main/api/
+    responsibilities:
+      - Fastify instance with @fastify/websocket
+      - Port probe (starting at 9100, tries +1 until available)
+      - Auth routes (POST /auth → JWT token)
+      - REST routes (GET /projects, GET /projects/:id/sessions, POST /projects/:id/sessions)
+      - WebSocket route (/ws/sessions/:id/output) for terminal streaming
+      - WebSocket route (/ws/sessions/:id/input) for terminal input
+      - Static file serving (remote web UI bundle from dist/web/)
+      - Token validation middleware on all protected routes
+      - Rate limiting (via @fastify/rate-limit)
+
+  - name: PersistenceStore
+    location: src/main/store/
+    responsibilities:
+      - electron-store instance for project list and user preferences
+      - Credential read/write via Electron safeStorage (encrypted)
+      - Schema versioning and migration helpers
+
+  - name: DesktopUI (renderer)
+    location: src/renderer/
+    components:
+      - ProjectSidebar: tree view of Projects > Sessions > Sub-sessions
+      - TerminalPane: xterm.js instance + toolbar (session name, yolo indicator, kill button)
+      - PaneLayout: allotment-based tab/split-pane container
+      - QuickLaunch: modal dialog for creating sessions
+      - SettingsPanel: remote API config, keyboard shortcuts, theme, agent pack status
+      - StatusBar: session count, API port, yolo count
+    state:
+      store: Zustand
+      slices: projects, sessions, ui (active pane, layout), settings
+
+  - name: RemoteWebUI
+    location: src/web/
+    components:
+      - ProjectList: collapsible list of projects with session counts
+      - SessionTree: hierarchical list of sessions/sub-sessions
+      - TerminalView: full-width xterm.js instance
+      - NewSessionDialog: form to create a session
+      - AuthScreen: username/password form → stores token in sessionStorage
+    api_layer:
+      - api.ts: typed fetch wrappers for REST endpoints
+      - ws.ts: WebSocket manager with auto-reconnect on disconnect
+
+  - name: IpcBridge
+    location: src/preload/ + src/main/ipc/
+    responsibilities:
+      - contextBridge exposes window.kleiber namespace
+      - Channels for: session CRUD, terminal data, project CRUD, settings, pack status
+      - Main-side handlers registered in ipcMain
+      - Renderer-side typed wrappers via preload
+
+data_modeling:
+  persisted:
+    Project:
+      id: string (uuid)
+      name: string (unique)
+      directoryPath: string (absolute)
+      yoloDefault: boolean
+      createdAt: ISO8601 string
+    AppSettings:
+      remoteApiEnabled: boolean
+      remoteApiPort: number | null  # null = auto-select
+      remoteApiBindAddress: string  # default 0.0.0.0
+      theme: dark | light
+      quickLaunchShortcut: string
+    RemoteApiCredentials:
+      username: string
+      passwordHash: string  # stored encrypted via safeStorage
+  in_memory_only:
+    Session:
+      id: string (uuid)
+      projectId: string
+      parentSessionId: string | null
+      type: plain | agent | agent_role
+      cli: string | null           # claude | codex | opencode | gemini
+      role: string | null          # coding-agent-pack role name
+      yolo: boolean                # effective value (after inheritance)
+      state: starting | running | exited
+      exitCode: number | null
+      outputBuffer: string[]       # circular, last 1000 lines
+      mcpEnabled: boolean
+      mcpWrapperId: number | null  # child process pid
+
+integrations:
+  coding_agent_pack:
+    location_in_app: resources/coding-agent-pack/ (bundled via electron-builder extraResources)
+    detection_path:
+      linux_macos: "~/.agents/skills/requirements-engineer/"
+      windows: "%USERPROFILE%\\.agents\\skills\\requirements-engineer\\"
+    installer_invocation:
+      linux: "bash <bundled>/install.sh --mode global"
+      macos: "bash <bundled>/install_macos.sh --mode global"
+      windows: "powershell -ExecutionPolicy Bypass -File <bundled>\\install.ps1 --mode global"
+    role_discovery: scan shared/.agents/skills/ directories (exclude project-spec-utils)
+    config_read: .agent_specs/agent_pack_config.yaml in project directory (optional)
+
+  agent_clis:
+    spawn_mechanism: node-pty (PTY allocation)
+    working_directory: project.directoryPath
+    yolo_flags:
+      claude: "--dangerously-skip-permissions"
+      codex: "--dangerously-bypass-approvals-and-sandbox"
+      opencode: "(configure in harness adapter / docs-dependent)"
+      gemini: "(TBD - check Gemini CLI docs)"
+    mcp_injection:
+      mechanism: >
+        Pass the MCP stdio wrapper as a server config to the CLI.
+        For Claude Code: via CLAUDE.json or --mcp-server flag.
+        For Codex: via inline `-c mcp_servers.*` config overrides.
+        For OpenCode: via injected `OPENCODE_CONFIG_CONTENT`.
+        For Gemini CLI: via .gemini/settings.json or --mcp flag.
+      wrapper_command: "node <app>/resources/mcp-wrapper.js"
+      wrapper_env:
+        KLEIBER_SESSION_ID: session id
+        KLEIBER_PROJECT_ID: project id
+        KLEIBER_MCP_SOCKET_PATH: IPC socket path / named pipe
+
+deployment_topology:
+  packaging:
+    tool: electron-builder
+    targets:
+      linux: AppImage + deb
+      macos: dmg (universal binary for Intel + Apple Silicon)
+      windows: NSIS installer (.exe)
+    bundled_resources:
+      - coding-agent-pack/ (extraResources)
+      - mcp-wrapper.js (resources)
+      - dist/web/ (remote web UI static bundle, extraResources or embedded in asar)
+  update_mechanism: electron-updater (future; not in v1 scope)
+  monorepo_layout:
+    tool: pnpm workspaces
+    packages:
+      - packages/main    # Electron main process
+      - packages/renderer # Desktop React UI
+      - packages/preload  # Electron preload scripts
+      - packages/web      # Remote web UI
+      - packages/shared   # Shared TypeScript types and constants
+
+observability:
+  logging:
+    library: electron-log
+    targets:
+      - app.log (rotated, in Electron userData directory)
+      - Console (development only)
+    levels: error, warn, info, debug (configurable)
+    log_items:
+      - Session spawn/exit events with exit codes
+      - MCP tool calls (redacted of PTY content)
+      - Remote API auth attempts (redacted of credentials)
+      - Agent pack install events
+  error_surfaces:
+    - Session tree: error badge on failed sessions
+    - Warning banner: agent pack not installed
+    - Toast notifications: remote API errors, MCP errors
+    - OS notifications: session exit
+
+security_dependencies:
+  - Electron safeStorage for credential encryption (OS keychain)
+  - jose (JWT HS256) for remote API token auth — key generated at runtime, in memory only
+  - "@fastify/rate-limit" for remote API rate limiting
+  - contextBridge with nodeIntegration:false in renderer (no direct Node.js access from UI)
+  - MCP yolo inheritance enforced in McpOrchestrator (not in wrapper, not bypassable)
+  - MCP tool calls project-scoped in McpOrchestrator
+  - McpStdioWrapper has no direct PTY access (all ops go through orchestrator)
+  - Remote API bind address configurable but defaults to 0.0.0.0 (user opt-in required to enable)
+
+scalability_and_performance:
+  terminal_session_limit:
+    target: 10 concurrent sessions without UI lag (NFR-01.1)
+    strategy: >
+      Lazy-initialize xterm.js instances: only create an xterm instance for the active/visible
+      session. Inactive sessions buffer data in the main process. On tab switch, mount xterm,
+      replay buffer, then switch to live streaming.
+  output_buffer:
+    type: Circular buffer (ring buffer) of last 1000 lines per session
+    purpose: Used by read_session MCP tool; avoids unbounded memory growth
+  remote_websocket:
+    multiplexing: One WebSocket connection per session (client subscribes by session ID)
+    backpressure: Main process checks ws.bufferedAmount before sending; drops if disconnected
+  ipc_throughput:
+    concern: High-frequency PTY output may flood IPC channel
+    mitigation: >
+      Batch PTY output in main process: accumulate data for up to 16ms (one frame),
+      then send as a single IPC message to renderer. Same batching for WebSocket broadcast.
+
+risks:
+  - id: R-01
+    risk: Agent CLIs change their MCP injection flags or PTY launch interface
+    likelihood: medium
+    impact: medium
+    mitigation: >
+      Abstract all CLI-specific flags into a harness adapter config layer (YAML-driven).
+      Adding or changing a CLI flag requires only a config update, not code changes (NFR-05.1).
+
+  - id: R-02
+    risk: MCP protocol spec evolves, breaking the stdio wrapper protocol
+    likelihood: medium
+    impact: high
+    mitigation: >
+      Pin the MCP SDK version. Include MCP protocol version in capabilities response (NFR-05.2).
+      Wrapper is a small, isolated module — easier to update independently.
+
+  - id: R-03
+    risk: Electron memory usage with 10+ xterm.js instances
+    likelihood: high
+    impact: medium
+    mitigation: >
+      Lazy xterm.js initialization (only active pane gets a live instance).
+      Dispose xterm instances for exited sessions after a configurable timeout (default 5 min).
+      Each xterm instance ~5-10MB; 10 active = ~100MB added to Electron baseline (~150MB).
+      Total ~250MB is acceptable for a developer tool.
+
+  - id: R-04
+    risk: Remote API exposed on 0.0.0.0 creates security surface
+    likelihood: medium
+    impact: high
+    mitigation: >
+      Disabled by default. Requires explicit user opt-in.
+      JWT auth on all endpoints. Rate limiting via @fastify/rate-limit.
+      Credentials stored in OS keychain. Documented that the user is responsible for network security.
+
+  - id: R-05
+    risk: node-pty Windows support is fragile (ConPTY vs WinPTY)
+    likelihood: medium
+    impact: high (Windows platform)
+    mitigation: >
+      node-pty 1.x uses ConPTY on Windows (modern, stable). Pin to node-pty >=1.0.
+      Test Windows in CI early using GitHub Actions windows-latest runner.
+
+  - id: R-06
+    risk: Per-CLI MCP configuration formats may drift over time
+    likelihood: medium
+    impact: medium
+    mitigation: >
+      Keep the harness adapter layer config-driven and prefer session-local inline
+      configuration so Kleiber does not mutate the user's persistent global CLI config.
+
+  - id: R-07
+    risk: Bundled coding-agent-pack becomes outdated relative to user's installed version
+    likelihood: medium
+    impact: low
+    mitigation: >
+      The bundled pack is used only to run the global installer.
+      Once globally installed, agents use the globally installed files.
+      A future update mechanism (electron-updater) will update both the app and the bundled pack.
+
+migration_or_adoption_notes:
+  - No existing app to migrate from (greenfield)
+  - Users who already have the coding-agent-pack globally installed will skip the install step
+  - The app does not interfere with existing agent CLI configurations or project directories
+  - The remote web UI requires no installation on the client device (browser-only)
+  - Development workflow: pnpm install → pnpm dev (starts electron-vite with HMR for all packages)
+  - First CI target: Linux (AppImage); macOS and Windows added before first release

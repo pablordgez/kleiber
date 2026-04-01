@@ -1,4 +1,11 @@
 {
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@kleiber/shared": ["packages/shared/src/index.ts"],
+      "@kleiber/shared/*": ["packages/shared/src/*"]
+    }
+  },
   "files": [],
   "references": [
     { "path": "./packages/shared" },

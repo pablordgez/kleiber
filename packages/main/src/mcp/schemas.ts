@@ -163,10 +163,11 @@ function validateInto(schema: JsonSchema, value: unknown, path: string, errors: 
         errors.push(`${path} must be an integer.`);
         return;
       }
-      if (schema.minimum !== undefined && value < schema.minimum) {
+      const integerValue = value as number;
+      if (schema.minimum !== undefined && integerValue < schema.minimum) {
         errors.push(`${path} must be >= ${String(schema.minimum)}.`);
       }
-      if (schema.maximum !== undefined && value > schema.maximum) {
+      if (schema.maximum !== undefined && integerValue > schema.maximum) {
         errors.push(`${path} must be <= ${String(schema.maximum)}.`);
       }
       return;

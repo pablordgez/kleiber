@@ -379,6 +379,46 @@ describe("IPC handlers remediation", () => {
     expect(createInput.mcpLaunchConfig.envTemplate.OPENCODE_CONFIG_CONTENT).toContain("{mcpSocketPath}");
   });
 
+  it("allows MCP to be disabled per session even when the harness supports it", async () => {
+    const { registerIpcHandlers } = await import("./handlers.js");
+    registerIpcHandlers();
+
+    const projectDir = await mkdtemp(path.join(os.tmpdir(), "kleiber-mcp-disabled-"));
+    mockState.projects.set("project-mcp-off", {
+      id: "project-mcp-off",
+      name: "Project MCP Off",
+      directoryPath: projectDir,
+      yoloDefault: false,
+      createdAt: new Date().toISOString(),
+    });
+
+    mockState.readProjectConfigMock.mockResolvedValue(
+      buildPackConfig({
+        harness_adapters: {
+          claude_code: {
+            enabled: true,
+            orchestration: "native_subagents_or_agent_teams",
+            launch_command: "claude",
+            mcp_injection: "env",
+          },
+        },
+      }),
+    );
+
+    const handler = mockState.registeredHandlers.get(IPC_CHANNELS.sessions.create);
+    await handler?.({}, {
+      projectId: "project-mcp-off",
+      name: "No MCP Session",
+      type: "agent",
+      cli: "claude",
+      mcpEnabled: false,
+    });
+
+    const createInput = mockState.createSessionMock.mock.calls.at(-1)?.[0] as Record<string, any>;
+    expect(createInput.mcpEnabled).toBe(false);
+    expect(createInput.mcpLaunchConfig).toBeNull();
+  });
+
   it("rejects agent session creation when the CLI is disabled in project config", async () => {
     const { registerIpcHandlers } = await import("./handlers.js");
     registerIpcHandlers();
@@ -441,5 +481,164 @@ describe("IPC handlers remediation", () => {
     expect(status.bundledRoles).toEqual(["architect"]);
     expect(roles).toEqual(["architect", "task-planner"]);
     expect(mockState.getPackStatusMock).toHaveBeenCalledWith(projectDir);
+  });
+
+  it("builds MCP argv launch config and role args templates for agent sessions", async () => {
+    const { resolveSessionCreateOptions } = await import("./handlers.js");
+
+    const projectDir = await mkdtemp(path.join(os.tmpdir(), "kleiber-agent-argv-"));
+    mockState.projects.set("project-5", {
+      id: "project-5",
+      name: "Project 5",
+      directoryPath: projectDir,
+      yoloDefault: false,
+      createdAt: new Date().toISOString(),
+    });
+
+    mockState.readProjectConfigMock.mockResolvedValue(
+      buildPackConfig({
+        harness_adapters: {
+          claude_code: {
+            enabled: true,
+            orchestration: "native_subagents_or_agent_teams",
+            launch_command: "claude",
+            mcp_injection: "argv",
+          },
+        },
+        agent_overrides: {
+          claude_code: {
+            role_args_template: ["--role", "{role}", "--persona={role}"],
+            mcp_args_template: ["--mcp", "{wrapperCommand}", "{wrapperArgsJson}"],
+            mcp_env_template: {
+              MCP_SESSION: "{sessionId}",
+              MCP_PROJECT: "{projectId}",
+            },
+          },
+        },
+      }),
+    );
+
+    const { project, createSessionInput } = await resolveSessionCreateOptions(
+      {
+        projectId: "project-5",
+        name: "Architect",
+        type: "agent_role",
+        cli: "claude-code",
+        role: "architect",
+        yolo: false,
+        workingDirectory: path.join(projectDir, "workspace"),
+      },
+      {
+        storeInstance: { getProject: mockState.getProjectMock },
+        packManager: { readProjectConfig: mockState.readProjectConfigMock },
+        mcpRuntime: {
+          wrapperCommand: process.execPath,
+          wrapperArgs: ["/tmp/wrapper.js"],
+        },
+      },
+    );
+
+    expect(project.directoryPath).toBe(projectDir);
+    expect(createSessionInput.cli).toBe("claude");
+    expect(createSessionInput.workingDirectory).toBe(path.join(projectDir, "workspace"));
+    expect(createSessionInput.launch).toEqual({
+      command: "claude",
+      args: ["--role", "architect", "--persona=architect"],
+      env: { KLEIBER_AGENT_ROLE: "architect" },
+    });
+    expect(createSessionInput.mcpEnabled).toBe(true);
+    expect(createSessionInput.mcpLaunchConfig).toEqual({
+      injectionMethod: "argv",
+      wrapperCommand: process.execPath,
+      wrapperArgs: ["/tmp/wrapper.js"],
+      argsTemplate: ["--mcp", "{wrapperCommand}", "{wrapperArgsJson}"],
+      envTemplate: {
+        MCP_SESSION: "{sessionId}",
+        MCP_PROJECT: "{projectId}",
+      },
+    });
+  });
+
+  it("can disable MCP injection explicitly for supported agent CLIs", async () => {
+    const { resolveSessionCreateOptions } = await import("./handlers.js");
+
+    const projectDir = await mkdtemp(path.join(os.tmpdir(), "kleiber-agent-no-mcp-"));
+    mockState.projects.set("project-6", {
+      id: "project-6",
+      name: "Project 6",
+      directoryPath: projectDir,
+      yoloDefault: true,
+      createdAt: new Date().toISOString(),
+    });
+
+    mockState.readProjectConfigMock.mockResolvedValue(
+      buildPackConfig({
+        harness_adapters: {
+          codex: {
+            enabled: true,
+            orchestration: "native_subagents",
+            launch_command: "codex",
+            mcp_injection: "env",
+            yolo_flag: "--dangerously-bypass-approvals-and-sandbox",
+          },
+        },
+      }),
+    );
+
+    const { createSessionInput } = await resolveSessionCreateOptions(
+      {
+        projectId: "project-6",
+        name: "Codex",
+        type: "agent",
+        cli: "codex",
+        yolo: true,
+        mcpEnabled: false,
+      },
+      {
+        storeInstance: { getProject: mockState.getProjectMock },
+        packManager: { readProjectConfig: mockState.readProjectConfigMock },
+        mcpRuntime: {
+          wrapperCommand: process.execPath,
+          wrapperArgs: ["/tmp/wrapper.js"],
+        },
+      },
+    );
+
+    expect(createSessionInput.defaultYolo).toBe(true);
+    expect(createSessionInput.launch).toEqual({
+      command: "codex",
+      args: ["--dangerously-bypass-approvals-and-sandbox"],
+      env: {},
+    });
+    expect(createSessionInput.mcpEnabled).toBe(false);
+    expect(createSessionInput.mcpLaunchConfig).toBeNull();
+  });
+
+  it("rejects agent sessions that do not resolve to a supported CLI", async () => {
+    const { resolveSessionCreateOptions } = await import("./handlers.js");
+
+    const projectDir = await mkdtemp(path.join(os.tmpdir(), "kleiber-agent-invalid-"));
+    mockState.projects.set("project-7", {
+      id: "project-7",
+      name: "Project 7",
+      directoryPath: projectDir,
+      yoloDefault: false,
+      createdAt: new Date().toISOString(),
+    });
+
+    await expect(
+      resolveSessionCreateOptions(
+        {
+          projectId: "project-7",
+          name: "Invalid",
+          type: "agent",
+          cli: "unknown-cli",
+        },
+        {
+          storeInstance: { getProject: mockState.getProjectMock },
+          packManager: { readProjectConfig: mockState.readProjectConfigMock },
+        },
+      ),
+    ).rejects.toThrow(/supported CLI identifier/);
   });
 });

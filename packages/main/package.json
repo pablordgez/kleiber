@@ -7,10 +7,14 @@
     "build": "echo \"Built from root via electron-vite\"",
     "clean": "rimraf ../../dist/main",
     "lint": "eslint .",
+    "test": "vitest run packages/main/src/**/*.test.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
+    "@kleiber/shared": "workspace:*",
     "electron-log": "^5.4.3",
-    "@kleiber/shared": "workspace:*"
+    "electron-store": "^10.1.0",
+    "node-pty": "^1.0.0",
+    "yaml": "^2.8.1"
   }
 }

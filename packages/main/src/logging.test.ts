@@ -1,20 +1,18 @@
-import assert from "node:assert/strict";
-import test from "node:test";
+import { expect, it } from "vitest";
 
 import { buildRotatedLogPath, formatSecurityEvent } from "./logging";
 
-test("formatSecurityEvent uses the security template", () => {
-  assert.equal(
+it("formatSecurityEvent uses the security template", () => {
+  expect(
     formatSecurityEvent({
       action: "remote-api-bind",
       actor: "main-process",
       outcome: "allowed",
       scope: "local",
     }),
-    "[security] action=remote-api-bind actor=main-process outcome=allowed scope=local",
-  );
+  ).toBe("[security] action=remote-api-bind actor=main-process outcome=allowed scope=local");
 });
 
-test("getRotatedLogPath produces numbered rotation paths", () => {
-  assert.equal(buildRotatedLogPath("/tmp/main.log", 3), "/tmp/main.log.3");
+it("getRotatedLogPath produces numbered rotation paths", () => {
+  expect(buildRotatedLogPath("/tmp/main.log", 3)).toBe("/tmp/main.log.3");
 });

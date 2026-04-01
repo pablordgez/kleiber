@@ -1,13 +1,7 @@
-import assert from "node:assert/strict";
-import test from "node:test";
-
+import { describe, expect, it } from "vitest";
 import type { AgentPackConfig } from "@kleiber/shared";
-import {
-  resolveHarnessAdapter,
-  resolveLaunchCommand,
-  resolveMcpInjectionMethod,
-  resolveYoloFlag,
-} from "./harness-adapter";
+
+import { resolveHarnessAdapter, tryResolveHarnessAdapter } from "./harness-adapter";
 
 const config: AgentPackConfig = {
   version: 1,
@@ -28,6 +22,8 @@ const config: AgentPackConfig = {
       enabled: true,
       launch_command: "codex",
       orchestration: "native_subagents",
+      yolo_flag: "--yolo",
+      mcp_injection: "argv",
     },
     claude_code: {
       enabled: false,
@@ -40,10 +36,6 @@ const config: AgentPackConfig = {
     notes: [],
   },
   agent_overrides: {
-    codex: {
-      yolo_flag: "--yolo",
-      mcp_injection: "argv",
-    },
     claude_code: {
       yoloFlag: "-y",
       mcpInjection: "env",
@@ -51,30 +43,30 @@ const config: AgentPackConfig = {
   },
 };
 
-test("resolves adapter data without hardcoded harness branching", () => {
-  assert.deepEqual(resolveHarnessAdapter(config, "codex"), {
-    harnessName: "codex",
-    enabled: true,
-    launchCommand: "codex",
-    orchestration: "native_subagents",
-    yoloFlag: "--yolo",
-    mcpInjection: "argv",
+describe("harness adapter resolution", () => {
+  it("resolves adapter data by harness key", () => {
+    expect(resolveHarnessAdapter(config, "codex")).toEqual({
+      harnessName: "codex",
+      enabled: true,
+      launchCommand: "codex",
+      orchestration: "native_subagents",
+      yoloFlag: "--yolo",
+      mcpInjection: "argv",
+    });
   });
-});
 
-test("resolves alias override keys for yolo and mcp injection", () => {
-  assert.equal(resolveLaunchCommand(config, "claude_code"), "claude");
-  assert.equal(resolveYoloFlag(config, "claude_code"), "-y");
-  assert.equal(resolveMcpInjectionMethod(config, "claude_code"), "env");
-});
+  it("resolves adapter data by CLI launch command", () => {
+    expect(resolveHarnessAdapter(config, "claude")).toEqual({
+      harnessName: "claude_code",
+      enabled: false,
+      launchCommand: "claude",
+      orchestration: "plugin_or_manual",
+      yoloFlag: "-y",
+      mcpInjection: "env",
+    });
+  });
 
-test("returns nulls when the harness adapter is missing", () => {
-  assert.deepEqual(resolveHarnessAdapter(config, "gemini_cli"), {
-    harnessName: "gemini_cli",
-    enabled: false,
-    launchCommand: null,
-    orchestration: null,
-    yoloFlag: null,
-    mcpInjection: null,
+  it("returns null for unknown harnesses", () => {
+    expect(tryResolveHarnessAdapter(config, "gemini")).toBeNull();
   });
 });

@@ -1,9 +1,8 @@
-import test from "node:test";
-import assert from "node:assert/strict";
+import { expect, it } from "vitest";
 
-import { CircularBuffer } from "./circular-buffer.js";
+import { CircularBuffer } from "./circular-buffer";
 
-test("CircularBuffer evicts the oldest values when capacity is exceeded", () => {
+it("CircularBuffer evicts the oldest values when capacity is exceeded", () => {
   const buffer = new CircularBuffer<string>(3);
 
   buffer.push("one");
@@ -11,6 +10,6 @@ test("CircularBuffer evicts the oldest values when capacity is exceeded", () => 
   buffer.push("three");
   buffer.push("four");
 
-  assert.deepEqual(buffer.toArray(), ["two", "three", "four"]);
-  assert.deepEqual(buffer.last(2), ["three", "four"]);
+  expect(buffer.toArray()).toEqual(["two", "three", "four"]);
+  expect(buffer.last(2)).toEqual(["three", "four"]);
 });

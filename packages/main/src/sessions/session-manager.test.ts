@@ -1,5 +1,4 @@
-import assert from "node:assert/strict";
-import test from "node:test";
+import { describe, expect, it } from "vitest";
 
 import {
   SessionManager,
@@ -7,7 +6,7 @@ import {
   type PtyExitEvent,
   type PtyFactory,
   type PtyProcess,
-} from "./session-manager.js";
+} from "./session-manager";
 
 class FakePty implements PtyProcess {
   readonly #dataListeners = new Set<(data: string) => void>();
@@ -91,7 +90,8 @@ function createManager(factory: PtyFactory, outputBufferSize = 5): SessionManage
   });
 }
 
-test("createSession transitions to running, forwards input, and delegates resize", async () => {
+describe("SessionManager", () => {
+it("createSession transitions to running, forwards input, and delegates resize", async () => {
   const fakeFactory = new FakePtyFactory();
   const manager = createManager(fakeFactory.factory);
   const updates: string[] = [];
@@ -109,13 +109,13 @@ test("createSession transitions to running, forwards input, and delegates resize
   manager.resizeSession(session.id, { columns: 140, rows: 40 });
 
   const pty = fakeFactory.created[0];
-  assert.equal(session.state, "running");
-  assert.deepEqual(updates, ["running"]);
-  assert.deepEqual(pty?.writes, ["echo hello\n"]);
-  assert.deepEqual(pty?.resizeCalls, [{ columns: 140, rows: 40 }]);
+  expect(session.state).toBe("running");
+  expect(updates).toEqual(["running"]);
+  expect(pty?.writes).toEqual(["echo hello\n"]);
+  expect(pty?.resizeCalls).toEqual([{ columns: 140, rows: 40 }]);
 });
 
-test("killSession cascades through descendants", async () => {
+it("killSession cascades through descendants", async () => {
   const fakeFactory = new FakePtyFactory();
   const manager = createManager(fakeFactory.factory);
 
@@ -136,17 +136,16 @@ test("killSession cascades through descendants", async () => {
 
   const killedIds = manager.killSession(parent.id);
 
-  assert.deepEqual(new Set(killedIds), new Set([parent.id, child.id, grandchild.id]));
-  assert.equal(manager.getSession(parent.id)?.state, "exited");
-  assert.equal(manager.getSession(child.id)?.state, "exited");
-  assert.equal(manager.getSession(grandchild.id)?.state, "exited");
-  assert.deepEqual(
+  expect(new Set(killedIds)).toEqual(new Set([parent.id, child.id, grandchild.id]));
+  expect(manager.getSession(parent.id)?.state).toBe("exited");
+  expect(manager.getSession(child.id)?.state).toBe("exited");
+  expect(manager.getSession(grandchild.id)?.state).toBe("exited");
+  expect(
     fakeFactory.created.map((pty) => pty.killCount),
-    [1, 1, 1],
-  );
+  ).toEqual([1, 1, 1]);
 });
 
-test("readSession returns the newest lines and truncates oversized lines", async () => {
+it("readSession returns the newest lines and truncates oversized lines", async () => {
   const fakeFactory = new FakePtyFactory();
   const manager = createManager(fakeFactory.factory, 3);
   const session = await manager.createSession({
@@ -160,12 +159,12 @@ test("readSession returns the newest lines and truncates oversized lines", async
   pty?.emitExit({ exitCode: 0, signal: null });
 
   const lines = manager.readSession(session.id);
-  assert.equal(lines.length, 3);
-  assert.deepEqual(lines.slice(0, 2), ["two", "three"]);
-  assert.match(lines[2] ?? "", /\[truncated\]$/);
+  expect(lines).toHaveLength(3);
+  expect(lines.slice(0, 2)).toEqual(["two", "three"]);
+  expect(lines[2] ?? "").toMatch(/\[truncated\]$/);
 });
 
-test("child sessions inherit yolo=false from a non-yolo parent", async () => {
+it("child sessions inherit yolo=false from a non-yolo parent", async () => {
   const fakeFactory = new FakePtyFactory();
   const manager = createManager(fakeFactory.factory);
 
@@ -181,11 +180,11 @@ test("child sessions inherit yolo=false from a non-yolo parent", async () => {
     requestedYolo: true,
   });
 
-  assert.equal(parent.yolo, false);
-  assert.equal(child.yolo, false);
+  expect(parent.yolo).toBe(false);
+  expect(child.yolo).toBe(false);
 });
 
-test("session-exited is emitted when the PTY exits within 1s", async () => {
+it("session-exited is emitted when the PTY exits within 1s", async () => {
   const fakeFactory = new FakePtyFactory();
   const manager = createManager(fakeFactory.factory);
   const session = await manager.createSession({
@@ -209,10 +208,7 @@ test("session-exited is emitted when the PTY exits within 1s", async () => {
     pty?.emitExit({ exitCode: 7, signal: null });
   }, 50);
 
-  await assert.doesNotReject(async () => {
-    await exitEvent;
-  });
-
-  assert.deepEqual(await exitEvent, { sessionId: session.id, exitCode: 7 });
-  assert.equal(manager.getSession(session.id)?.state, "exited");
+  await expect(exitEvent).resolves.toEqual({ sessionId: session.id, exitCode: 7 });
+  expect(manager.getSession(session.id)?.state).toBe("exited");
+});
 });

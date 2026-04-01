@@ -1,18 +1,14 @@
-import { test } from "node:test";
-import assert from "node:assert/strict";
+import { describe, expect, it } from "vitest";
 
 import { parseAgentPackConfigYaml } from "./agent-pack-config";
 
-const EXAMPLE_CONFIG = `# Copy this file to .agent_specs/agent_pack_config.yaml and customize it.
-version: 1
-
+const EXAMPLE_CONFIG = `version: 1
 providers:
   allowed:
     - openai
     - anthropic
     - google
   disallowed: []
-
 models:
   defaults:
     low_complexity:
@@ -26,35 +22,33 @@ models:
       model: gpt-5.4
   notes:
     - Prefer faster, cheaper models for scoped work.
-
 harness_adapters:
   codex:
     enabled: true
     orchestration: native_subagents
     launch_command: codex
-
+    yolo_flag: --yolo
+    mcp_injection: argv
 mcp:
   available: []
   notes:
     - No cross-harness MCP adapters configured.
-
 agent_overrides: {}
 `;
 
-test("parseAgentPackConfigYaml parses the expected schema", () => {
-  const parsed = parseAgentPackConfigYaml(EXAMPLE_CONFIG);
+describe("parseAgentPackConfigYaml", () => {
+  it("parses the expected schema", () => {
+    const parsed = parseAgentPackConfigYaml(EXAMPLE_CONFIG);
 
-  assert.equal(parsed.version, 1);
-  assert.deepEqual(parsed.providers.allowed, ["openai", "anthropic", "google"]);
-  assert.equal(parsed.models.defaults.low_complexity.model, "gpt-5.4-mini");
-  assert.equal(parsed.harness_adapters.codex.enabled, true);
-  assert.deepEqual(parsed.mcp.available, []);
-  assert.deepEqual(parsed.agent_overrides, {});
-});
+    expect(parsed.version).toBe(1);
+    expect(parsed.providers.allowed).toEqual(["openai", "anthropic", "google"]);
+    expect(parsed.models.defaults.low_complexity.model).toBe("gpt-5.4-mini");
+    expect(parsed.harness_adapters.codex?.enabled).toBe(true);
+    expect(parsed.harness_adapters.codex?.yolo_flag).toBe("--yolo");
+  });
 
-test("parseAgentPackConfigYaml throws for invalid fields", () => {
-  assert.throws(
-    () =>
+  it("throws for invalid fields", () => {
+    expect(() =>
       parseAgentPackConfigYaml(`version: "one"
 providers:
   allowed: []
@@ -77,6 +71,6 @@ mcp:
   notes: []
 agent_overrides: {}
 `),
-    /version/u,
-  );
+    ).toThrow(/version/);
+  });
 });

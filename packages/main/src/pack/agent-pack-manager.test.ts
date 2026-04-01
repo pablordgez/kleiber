@@ -1,8 +1,9 @@
-import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { test } from "node:test";
+
+import { afterEach, describe, expect, it } from "vitest";
 
 import { AgentPackManager } from "./agent-pack-manager";
 
@@ -34,82 +35,101 @@ mcp:
 agent_overrides: {}
 `;
 
-test("AgentPackManager detects global install and discovers roles", async () => {
-  const tempRoot = await mkdtemp(path.join(os.tmpdir(), "pack-manager-test-"));
-  const homeDir = path.join(tempRoot, "home");
+const tempRoots: string[] = [];
 
-  try {
-    const globalSkillPath = path.join(homeDir, ".agents", "skills", "requirements-engineer", "SKILL.md");
-    await mkdir(path.dirname(globalSkillPath), { recursive: true });
-    await writeFile(globalSkillPath, "# role", "utf8");
-
-    await mkdir(path.join(homeDir, ".agents", "skills", "architect"), { recursive: true });
-    await writeFile(path.join(homeDir, ".agents", "skills", "architect", "SKILL.md"), "# role", "utf8");
-    await mkdir(path.join(homeDir, ".agents", "skills", "not-a-role"), { recursive: true });
-
-    const manager = new AgentPackManager({ homeDir, cwd: tempRoot, packRoot: tempRoot });
-    assert.equal(await manager.isGlobalInstallPresent(), true);
-
-    const roles = await manager.discoverRoles("global");
-    assert.deepEqual(roles, ["architect", "requirements-engineer"]);
-  } finally {
-    await rm(tempRoot, { recursive: true, force: true });
-  }
+afterEach(async () => {
+  await Promise.all(tempRoots.splice(0).map((target) => rm(target, { recursive: true, force: true })));
 });
 
-test("AgentPackManager reads config and reports parser errors in status", async () => {
-  const tempRoot = await mkdtemp(path.join(os.tmpdir(), "pack-manager-test-"));
+async function createTempRoot(prefix: string): Promise<string> {
+  const target = await mkdtemp(path.join(os.tmpdir(), prefix));
+  tempRoots.push(target);
+  return target;
+}
 
-  try {
+function createSpawnStub(calls: Array<{ command: string; args: string[] }>) {
+  return ((command: string, args: string[]) => {
+    calls.push({ command, args });
+    const child = new EventEmitter() as EventEmitter & {
+      stdout: EventEmitter;
+      stderr: EventEmitter;
+    };
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    queueMicrotask(() => {
+      child.stdout.emit("data", Buffer.from("ok"));
+      child.emit("close", 0);
+    });
+    return child;
+  }) as unknown as typeof import("node:child_process").spawn;
+}
+
+describe("AgentPackManager", () => {
+  it("detects global installs and discovers bundled roles", async () => {
+    const tempRoot = await createTempRoot("pack-manager-");
+    const homeDir = path.join(tempRoot, "home");
+    const bundledSkillsDir = path.join(tempRoot, "coding-agent-pack", "shared", ".agents", "skills");
+
+    await mkdir(path.join(homeDir, ".agents", "skills", "requirements-engineer"), { recursive: true });
+    await writeFile(
+      path.join(homeDir, ".agents", "skills", "requirements-engineer", "SKILL.md"),
+      "# role",
+      "utf8",
+    );
+    await mkdir(path.join(bundledSkillsDir, "architect"), { recursive: true });
+    await mkdir(path.join(bundledSkillsDir, "project-spec-utils"), { recursive: true });
+    await writeFile(path.join(bundledSkillsDir, "architect", "SKILL.md"), "# role", "utf8");
+    await writeFile(path.join(bundledSkillsDir, "project-spec-utils", "SKILL.md"), "# helper", "utf8");
+
+    const manager = new AgentPackManager({
+      cwd: tempRoot,
+      homeDir,
+      packRoot: path.join(tempRoot, "coding-agent-pack"),
+    });
+
+    expect(await manager.isGlobalInstallPresent()).toBe(true);
+    expect(await manager.discoverBundledRoles()).toEqual(["architect"]);
+  });
+
+  it("reads project config and reports parser errors in status", async () => {
+    const tempRoot = await createTempRoot("pack-manager-");
     const configDir = path.join(tempRoot, ".agent_specs");
+
     await mkdir(configDir, { recursive: true });
     await writeFile(path.join(configDir, "agent_pack_config.yaml"), CONFIG_CONTENT, "utf8");
 
     const manager = new AgentPackManager({
-      homeDir: path.join(tempRoot, "home"),
       cwd: tempRoot,
-      packRoot: tempRoot,
+      homeDir: path.join(tempRoot, "home"),
+      packRoot: path.join(tempRoot, "coding-agent-pack"),
     });
 
-    const parsed = await manager.readProjectConfig(tempRoot);
-    assert.equal(parsed.models.defaults.medium_complexity.model, "gpt-5.4");
+    expect((await manager.readProjectConfig(tempRoot))?.models.defaults.medium_complexity.model).toBe("gpt-5.4");
 
     await writeFile(path.join(configDir, "agent_pack_config.yaml"), "version: nope", "utf8");
     const status = await manager.getStatus(tempRoot);
-    assert.equal(status.projectConfigExists, true);
-    assert.equal(status.projectConfig, null);
-    assert.match(status.projectConfigError ?? "", /version/u);
-  } finally {
-    await rm(tempRoot, { recursive: true, force: true });
-  }
-});
+    expect(status.projectConfigExists).toBe(true);
+    expect(status.projectConfig).toBeNull();
+    expect(status.projectConfigError).toBeTruthy();
+  });
 
-test("AgentPackManager executes installer script for global mode", async () => {
-  const tempRoot = await mkdtemp(path.join(os.tmpdir(), "pack-manager-test-"));
-
-  try {
-    const installScriptPath = path.join(tempRoot, "install.sh");
-    await writeFile(
-      installScriptPath,
-      [
-        "#!/usr/bin/env bash",
-        "set -euo pipefail",
-        "echo \"installer args: $*\"",
-      ].join("\n"),
-      "utf8",
-    );
+  it("invokes the installer with array-form spawn arguments", async () => {
+    const tempRoot = await createTempRoot("pack-manager-");
+    const calls: Array<{ command: string; args: string[] }> = [];
 
     const manager = new AgentPackManager({
-      homeDir: path.join(tempRoot, "home"),
       cwd: tempRoot,
+      homeDir: path.join(tempRoot, "home"),
       packRoot: tempRoot,
+      spawnRunner: createSpawnStub(calls),
     });
 
     const result = await manager.installGlobal({ copy: true });
-    assert.equal(result.exitCode, 0);
-    assert.equal(result.command, "bash");
-    assert.match(result.stdout, /--mode global --copy/u);
-  } finally {
-    await rm(tempRoot, { recursive: true, force: true });
-  }
+
+    expect(result.exitCode).toBe(0);
+    expect(calls[0]).toEqual({
+      command: "bash",
+      args: [path.join(tempRoot, "install.sh"), "--mode", "global", "--copy"],
+    });
+  });
 });

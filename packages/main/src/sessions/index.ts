@@ -1,2 +1,2 @@
-export * from "./circular-buffer.js";
-export * from "./session-manager.js";
+export * from "./circular-buffer";
+export * from "./session-manager";

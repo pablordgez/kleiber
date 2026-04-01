@@ -1,70 +1,81 @@
-import type { AgentPackConfig, HarnessAdapter, HarnessName } from "@kleiber/shared";
+import type { AgentPackConfig, HarnessAdapter } from "@kleiber/shared";
 
-export type HarnessInjectionMethod = "env" | "argv" | "stdin" | "stdio" | "unknown";
+export type HarnessInjectionMethod = NonNullable<HarnessAdapter["mcp_injection"]>;
 
-export interface ResolvedHarnessAdapter extends HarnessAdapter {
-  yolo_flag?: string | null;
-  mcp_injection?: HarnessInjectionMethod | null;
-}
-
-export interface HarnessAdapterResolution {
-  harnessName: HarnessName | string;
+export interface ResolvedHarnessAdapter {
+  harnessName: string;
   enabled: boolean;
-  launchCommand: string | null;
-  orchestration: string | null;
+  launchCommand: string;
+  orchestration: string;
   yoloFlag: string | null;
   mcpInjection: HarnessInjectionMethod | null;
 }
 
-type HarnessOverride = {
-  yolo_flag?: string;
-  yoloFlag?: string;
-  mcp_injection?: HarnessInjectionMethod;
-  mcpInjection?: HarnessInjectionMethod;
-};
-
-function readHarnessAdapter(config: AgentPackConfig, harnessName: HarnessName | string): ResolvedHarnessAdapter | null {
-  const adapter = config.harness_adapters[harnessName];
-  if (!adapter) {
+function readOverrideString(
+  config: AgentPackConfig,
+  harnessName: string,
+  keys: string[],
+): string | null {
+  const override = config.agent_overrides[harnessName];
+  if (!override || typeof override !== "object" || Array.isArray(override)) {
     return null;
   }
 
-  const overrides = config.agent_overrides[harnessName] as HarnessOverride | undefined;
+  const entries = override as Record<string, unknown>;
+  for (const key of keys) {
+    if (typeof entries[key] === "string") {
+      return entries[key];
+    }
+  }
 
+  return null;
+}
+
+function resolveAdapterEntry(
+  config: AgentPackConfig,
+  identifier: string,
+): [string, HarnessAdapter] | undefined {
+  const direct = config.harness_adapters[identifier];
+  if (direct) {
+    return [identifier, direct];
+  }
+
+  return Object.entries(config.harness_adapters).find(
+    ([, adapter]) => adapter.launch_command === identifier,
+  );
+}
+
+export function tryResolveHarnessAdapter(
+  config: AgentPackConfig,
+  identifier: string,
+): ResolvedHarnessAdapter | null {
+  const entry = resolveAdapterEntry(config, identifier);
+  if (!entry) {
+    return null;
+  }
+
+  const [harnessName, adapter] = entry;
   return {
-    ...adapter,
-    yolo_flag: overrides?.yolo_flag ?? overrides?.yoloFlag ?? null,
-    mcp_injection: overrides?.mcp_injection ?? overrides?.mcpInjection ?? null,
+    harnessName,
+    enabled: adapter.enabled,
+    launchCommand: adapter.launch_command,
+    orchestration: adapter.orchestration,
+    yoloFlag: adapter.yolo_flag ?? readOverrideString(config, harnessName, ["yolo_flag", "yoloFlag"]),
+    mcpInjection:
+      adapter.mcp_injection ??
+      ((readOverrideString(config, harnessName, ["mcp_injection", "mcpInjection"]) as HarnessInjectionMethod | null) ??
+        null),
   };
 }
 
 export function resolveHarnessAdapter(
   config: AgentPackConfig,
-  harnessName: HarnessName | string,
-): HarnessAdapterResolution {
-  const adapter = readHarnessAdapter(config, harnessName);
+  identifier: string,
+): ResolvedHarnessAdapter {
+  const resolved = tryResolveHarnessAdapter(config, identifier);
+  if (!resolved) {
+    throw new Error(`Unknown harness adapter or CLI: ${identifier}`);
+  }
 
-  return {
-    harnessName,
-    enabled: adapter?.enabled ?? false,
-    launchCommand: adapter?.launch_command ?? null,
-    orchestration: adapter?.orchestration ?? null,
-    yoloFlag: adapter?.yolo_flag ?? null,
-    mcpInjection: adapter?.mcp_injection ?? null,
-  };
-}
-
-export function resolveLaunchCommand(config: AgentPackConfig, harnessName: HarnessName | string): string | null {
-  return resolveHarnessAdapter(config, harnessName).launchCommand;
-}
-
-export function resolveYoloFlag(config: AgentPackConfig, harnessName: HarnessName | string): string | null {
-  return resolveHarnessAdapter(config, harnessName).yoloFlag;
-}
-
-export function resolveMcpInjectionMethod(
-  config: AgentPackConfig,
-  harnessName: HarnessName | string,
-): HarnessInjectionMethod | null {
-  return resolveHarnessAdapter(config, harnessName).mcpInjection;
+  return resolved;
 }

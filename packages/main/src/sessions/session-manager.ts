@@ -1,15 +1,9 @@
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
 
-import type {
-  AgentCli,
-  SessionRecord,
-  SessionState,
-  SessionType,
-  UUID,
-} from "../../../shared/src/types.js";
+import type { AgentCli, SessionRecord, SessionState, SessionType, UUID } from "@kleiber/shared";
 
-import { CircularBuffer } from "./circular-buffer.js";
+import { CircularBuffer } from "./circular-buffer";
 
 const DEFAULT_OUTPUT_BUFFER_SIZE = 1_000;
 const DEFAULT_COLUMNS = 120;

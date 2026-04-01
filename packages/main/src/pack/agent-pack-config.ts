@@ -1,294 +1,128 @@
-import type { AgentPackConfig } from "@kleiber/shared";
+import YAML from "yaml";
+import type { AgentPackConfig, HarnessAdapter } from "@kleiber/shared";
 
-type YamlScalar = string | number | boolean | null;
-type YamlValue = YamlScalar | YamlObject | YamlArray;
-type YamlObject = Record<string, YamlValue>;
-type YamlArray = YamlValue[];
+function expectRecord(value: unknown, label: string): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`Expected "${label}" to be an object.`);
+  }
 
-interface YamlLine {
-  indent: number;
-  content: string;
+  return value as Record<string, unknown>;
+}
+
+function expectString(value: unknown, label: string): string {
+  if (typeof value !== "string") {
+    throw new Error(`Expected "${label}" to be a string.`);
+  }
+
+  return value;
+}
+
+function expectNumber(value: unknown, label: string): number {
+  if (typeof value !== "number" || Number.isNaN(value)) {
+    throw new Error(`Expected "${label}" to be a number.`);
+  }
+
+  return value;
+}
+
+function expectBoolean(value: unknown, label: string): boolean {
+  if (typeof value !== "boolean") {
+    throw new Error(`Expected "${label}" to be a boolean.`);
+  }
+
+  return value;
+}
+
+function expectStringArray(value: unknown, label: string): string[] {
+  if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string")) {
+    throw new Error(`Expected "${label}" to be an array of strings.`);
+  }
+
+  return value;
+}
+
+function coerceHarnessAdapter(key: string, value: unknown): HarnessAdapter {
+  const adapter = expectRecord(value, `harness_adapters.${key}`);
+  const resolved: HarnessAdapter = {
+    enabled: expectBoolean(adapter.enabled, `harness_adapters.${key}.enabled`),
+    orchestration: expectString(adapter.orchestration, `harness_adapters.${key}.orchestration`),
+    launch_command: expectString(adapter.launch_command, `harness_adapters.${key}.launch_command`),
+  };
+
+  if (typeof adapter.yolo_flag === "string") {
+    resolved.yolo_flag = adapter.yolo_flag;
+  }
+
+  if (
+    adapter.mcp_injection === "env" ||
+    adapter.mcp_injection === "argv" ||
+    adapter.mcp_injection === "stdio" ||
+    adapter.mcp_injection === "none" ||
+    adapter.mcp_injection === "unknown"
+  ) {
+    resolved.mcp_injection = adapter.mcp_injection;
+  }
+
+  return resolved;
 }
 
 export function parseAgentPackConfigYaml(content: string): AgentPackConfig {
-  const parsed = parseYamlDocument(content);
-  return coerceAgentPackConfig(parsed);
-}
-
-function parseYamlDocument(content: string): YamlObject {
-  const lines = normalizeLines(content);
-  const [value, nextIndex] = parseObject(lines, 0, 0);
-  if (nextIndex !== lines.length) {
-    throw new Error("Unexpected trailing content in YAML document.");
-  }
-  return value;
-}
-
-function normalizeLines(content: string): YamlLine[] {
-  const lines = content
-    .split(/\r?\n/u)
-    .map((line) => stripInlineComment(line))
-    .filter((line) => line.trim().length > 0)
-    .map((line) => {
-      const match = line.match(/^ */u);
-      const indent = match ? match[0].length : 0;
-      if (indent % 2 !== 0) {
-        throw new Error("YAML parser only supports 2-space indentation.");
-      }
-      return {
-        indent,
-        content: line.slice(indent).trimEnd(),
-      };
-    });
-
-  return lines;
-}
-
-function stripInlineComment(line: string): string {
-  let inSingleQuote = false;
-  let inDoubleQuote = false;
-
-  for (let index = 0; index < line.length; index += 1) {
-    const char = line[index];
-    if (char === "'" && !inDoubleQuote) {
-      inSingleQuote = !inSingleQuote;
-      continue;
-    }
-    if (char === "\"" && !inSingleQuote) {
-      inDoubleQuote = !inDoubleQuote;
-      continue;
-    }
-    if (char === "#" && !inSingleQuote && !inDoubleQuote) {
-      const prev = index === 0 ? " " : line[index - 1];
-      if (/\s/u.test(prev)) {
-        return line.slice(0, index).trimEnd();
-      }
-    }
-  }
-
-  return line;
-}
-
-function parseObject(lines: YamlLine[], startIndex: number, indent: number): [YamlObject, number] {
-  const objectValue: YamlObject = {};
-  let index = startIndex;
-
-  while (index < lines.length) {
-    const line = lines[index];
-    if (line.indent < indent) {
-      break;
-    }
-    if (line.indent > indent) {
-      throw new Error(`Unexpected indentation at line index ${index}.`);
-    }
-    if (line.content.startsWith("- ")) {
-      throw new Error(`Expected object entry at line index ${index}.`);
-    }
-
-    const separatorIndex = line.content.indexOf(":");
-    if (separatorIndex <= 0) {
-      throw new Error(`Invalid object entry at line index ${index}.`);
-    }
-
-    const key = line.content.slice(0, separatorIndex).trim();
-    const rawValue = line.content.slice(separatorIndex + 1).trim();
-
-    if (rawValue.length > 0) {
-      objectValue[key] = parseScalar(rawValue);
-      index += 1;
-      continue;
-    }
-
-    const nextLine = lines[index + 1];
-    if (!nextLine || nextLine.indent <= indent) {
-      objectValue[key] = {};
-      index += 1;
-      continue;
-    }
-
-    if (nextLine.content.startsWith("- ")) {
-      const [arrayValue, nextIndex] = parseArray(lines, index + 1, indent + 2);
-      objectValue[key] = arrayValue;
-      index = nextIndex;
-      continue;
-    }
-
-    const [nestedObject, nextIndex] = parseObject(lines, index + 1, indent + 2);
-    objectValue[key] = nestedObject;
-    index = nextIndex;
-  }
-
-  return [objectValue, index];
-}
-
-function parseArray(lines: YamlLine[], startIndex: number, indent: number): [YamlArray, number] {
-  const values: YamlArray = [];
-  let index = startIndex;
-
-  while (index < lines.length) {
-    const line = lines[index];
-    if (line.indent < indent) {
-      break;
-    }
-    if (line.indent > indent) {
-      throw new Error(`Unexpected indentation at line index ${index}.`);
-    }
-    if (!line.content.startsWith("- ")) {
-      break;
-    }
-
-    const rawValue = line.content.slice(2).trim();
-    if (rawValue.length > 0) {
-      values.push(parseScalar(rawValue));
-      index += 1;
-      continue;
-    }
-
-    const nextLine = lines[index + 1];
-    if (!nextLine || nextLine.indent <= indent) {
-      values.push({});
-      index += 1;
-      continue;
-    }
-
-    if (nextLine.content.startsWith("- ")) {
-      const [nestedArray, nextIndex] = parseArray(lines, index + 1, indent + 2);
-      values.push(nestedArray);
-      index = nextIndex;
-      continue;
-    }
-
-    const [nestedObject, nextIndex] = parseObject(lines, index + 1, indent + 2);
-    values.push(nestedObject);
-    index = nextIndex;
-  }
-
-  return [values, index];
-}
-
-function parseScalar(rawValue: string): YamlValue {
-  if (rawValue === "true") {
-    return true;
-  }
-  if (rawValue === "false") {
-    return false;
-  }
-  if (rawValue === "null") {
-    return null;
-  }
-  if (rawValue === "[]") {
-    return [];
-  }
-  if (rawValue === "{}") {
-    return {};
-  }
-  if (/^-?\d+$/u.test(rawValue)) {
-    return Number.parseInt(rawValue, 10);
-  }
-  if (/^-?\d+\.\d+$/u.test(rawValue)) {
-    return Number.parseFloat(rawValue);
-  }
-  if (
-    (rawValue.startsWith("\"") && rawValue.endsWith("\"")) ||
-    (rawValue.startsWith("'") && rawValue.endsWith("'"))
-  ) {
-    return rawValue.slice(1, -1);
-  }
-  return rawValue;
-}
-
-function coerceAgentPackConfig(value: YamlObject): AgentPackConfig {
-  const providers = expectObject(value, "providers");
-  const models = expectObject(value, "models");
-  const defaults = expectObject(expectObject(models, "defaults"), "low_complexity");
-  void defaults;
+  const parsed = YAML.parse(content) as unknown;
+  const root = expectRecord(parsed, "root");
+  const providers = expectRecord(root.providers, "providers");
+  const models = expectRecord(root.models, "models");
+  const defaults = expectRecord(models.defaults, "models.defaults");
+  const mcp = expectRecord(root.mcp, "mcp");
+  const harnessAdapters = expectRecord(root.harness_adapters, "harness_adapters");
 
   return {
-    version: expectNumber(value, "version"),
+    version: expectNumber(root.version, "version"),
     providers: {
-      allowed: expectStringArray(providers, "allowed"),
-      disallowed: expectStringArray(providers, "disallowed"),
+      allowed: expectStringArray(providers.allowed, "providers.allowed"),
+      disallowed: expectStringArray(providers.disallowed, "providers.disallowed"),
     },
     models: {
       defaults: {
-        low_complexity: coerceModelDefault(expectObject(expectObject(models, "defaults"), "low_complexity")),
-        medium_complexity: coerceModelDefault(
-          expectObject(expectObject(models, "defaults"), "medium_complexity"),
-        ),
-        high_complexity: coerceModelDefault(expectObject(expectObject(models, "defaults"), "high_complexity")),
+        low_complexity: {
+          provider: expectString(
+            expectRecord(defaults.low_complexity, "models.defaults.low_complexity").provider,
+            "models.defaults.low_complexity.provider",
+          ),
+          model: expectString(
+            expectRecord(defaults.low_complexity, "models.defaults.low_complexity").model,
+            "models.defaults.low_complexity.model",
+          ),
+        },
+        medium_complexity: {
+          provider: expectString(
+            expectRecord(defaults.medium_complexity, "models.defaults.medium_complexity").provider,
+            "models.defaults.medium_complexity.provider",
+          ),
+          model: expectString(
+            expectRecord(defaults.medium_complexity, "models.defaults.medium_complexity").model,
+            "models.defaults.medium_complexity.model",
+          ),
+        },
+        high_complexity: {
+          provider: expectString(
+            expectRecord(defaults.high_complexity, "models.defaults.high_complexity").provider,
+            "models.defaults.high_complexity.provider",
+          ),
+          model: expectString(
+            expectRecord(defaults.high_complexity, "models.defaults.high_complexity").model,
+            "models.defaults.high_complexity.model",
+          ),
+        },
       },
-      notes: expectStringArray(models, "notes"),
+      notes: expectStringArray(models.notes, "models.notes"),
     },
-    harness_adapters: coerceHarnessAdapters(expectObject(value, "harness_adapters")),
+    harness_adapters: Object.fromEntries(
+      Object.entries(harnessAdapters).map(([key, value]) => [key, coerceHarnessAdapter(key, value)]),
+    ),
     mcp: {
-      available: expectStringArray(expectObject(value, "mcp"), "available"),
-      notes: expectStringArray(expectObject(value, "mcp"), "notes"),
+      available: expectStringArray(mcp.available, "mcp.available"),
+      notes: expectStringArray(mcp.notes, "mcp.notes"),
     },
-    agent_overrides: expectObject(value, "agent_overrides"),
+    agent_overrides: expectRecord(root.agent_overrides ?? {}, "agent_overrides"),
   };
-}
-
-function coerceModelDefault(value: YamlObject): { provider: string; model: string } {
-  return {
-    provider: expectString(value, "provider"),
-    model: expectString(value, "model"),
-  };
-}
-
-function coerceHarnessAdapters(value: YamlObject): AgentPackConfig["harness_adapters"] {
-  return Object.entries(value).reduce<AgentPackConfig["harness_adapters"]>((accumulator, [name, adapter]) => {
-    if (!isYamlObject(adapter)) {
-      throw new Error(`Expected harness adapter "${name}" to be an object.`);
-    }
-    accumulator[name] = {
-      enabled: expectBoolean(adapter, "enabled"),
-      launch_command: expectString(adapter, "launch_command"),
-      orchestration: expectString(adapter, "orchestration"),
-    };
-    return accumulator;
-  }, {});
-}
-
-function expectObject(source: YamlObject, key: string): YamlObject {
-  const value = source[key];
-  if (!isYamlObject(value)) {
-    throw new Error(`Expected "${key}" to be an object.`);
-  }
-  return value;
-}
-
-function expectNumber(source: YamlObject, key: string): number {
-  const value = source[key];
-  if (typeof value !== "number" || Number.isNaN(value)) {
-    throw new Error(`Expected "${key}" to be a number.`);
-  }
-  return value;
-}
-
-function expectBoolean(source: YamlObject, key: string): boolean {
-  const value = source[key];
-  if (typeof value !== "boolean") {
-    throw new Error(`Expected "${key}" to be a boolean.`);
-  }
-  return value;
-}
-
-function expectString(source: YamlObject, key: string): string {
-  const value = source[key];
-  if (typeof value !== "string") {
-    throw new Error(`Expected "${key}" to be a string.`);
-  }
-  return value;
-}
-
-function expectStringArray(source: YamlObject, key: string): string[] {
-  const value = source[key];
-  if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string")) {
-    throw new Error(`Expected "${key}" to be an array of strings.`);
-  }
-  return value;
-}
-
-function isYamlObject(value: YamlValue | undefined): value is YamlObject {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

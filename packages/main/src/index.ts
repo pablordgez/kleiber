@@ -5,6 +5,27 @@ import { registerIpcHandlers } from "./ipc/handlers";
 
 configureMainLogging(process.env.NODE_ENV === "development");
 
+function getContentSecurityPolicy(): string {
+  const isDev = !!process.env.ELECTRON_RENDERER_URL;
+  if (isDev) {
+    return [
+      "default-src 'self'",
+      "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+      "style-src 'self' 'unsafe-inline'",
+      "connect-src 'self' ws: wss: http: https:",
+      "font-src 'self' data:",
+    ].join("; ");
+  }
+
+  return [
+    "default-src 'self'",
+    "script-src 'self'",
+    "style-src 'self' 'unsafe-inline'",
+    "connect-src 'self' ws: wss:",
+    "font-src 'self'",
+  ].join("; ");
+}
+
 function createWindow(): void {
   const window = new BrowserWindow({
     width: 1200,
@@ -53,9 +74,7 @@ app.whenReady().then(() => {
     callback({
       responseHeaders: {
         ...details.responseHeaders,
-        "Content-Security-Policy": [
-          "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws: wss:; font-src 'self';",
-        ],
+        "Content-Security-Policy": [getContentSecurityPolicy()],
       },
     });
   });

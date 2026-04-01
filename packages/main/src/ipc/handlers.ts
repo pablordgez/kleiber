@@ -9,6 +9,7 @@ import type { ParentToWrapperResponse, WrapperToParentRequest } from "../mcp";
 import { SessionManager, type McpLaunchConfig } from "../sessions/session-manager";
 import { AgentPackManager } from "../pack/agent-pack-manager";
 import { resolveHarnessAdapter } from "../pack/harness-adapter";
+import { notifySessionExitIfUnfocused } from "../notifications";
 
 import { PersistenceStore } from "../store";
 
@@ -131,6 +132,7 @@ sessionManager.on("session-exited", (payload) => {
     windowInstance.webContents.send(`terminals:exit:${payload.session.id}`, payload.session.exitCode);
     windowInstance.webContents.send(IPC_CHANNELS.sessions.updated, payload.session);
   });
+  notifySessionExitIfUnfocused(payload, BrowserWindow.getAllWindows());
 });
 sessionManager.on("session-created", (payload) => {
   BrowserWindow.getAllWindows().forEach((windowInstance) => {

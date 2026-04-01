@@ -221,25 +221,26 @@ export class McpOrchestrator {
     }
 
     const workingDirectory = resolveWorkingDirectory(project.directoryPath, args.working_dir);
+    const launchArgs: string[] = [];
     const sessionInput: CreateSessionOptions = {
       projectId: project.id,
       parentSessionId: callerSession.id,
       cli,
       role,
-      name: args.name?.trim(),
+      ...(args.name?.trim() ? { name: args.name.trim() } : {}),
       workingDirectory,
-      requestedYolo: args.yolo,
+      ...(args.yolo !== undefined ? { requestedYolo: args.yolo } : {}),
       defaultYolo: project.yoloDefault,
       mcpEnabled: false,
       launch: {
         command: adapter.launchCommand,
-        args: [],
+        args: launchArgs,
         env: role ? { KLEIBER_AGENT_ROLE: role } : {},
       },
     };
 
     if (role) {
-      appendRoleLaunchArgs(sessionInput.launch.args, packConfig, adapter.harnessName, role);
+      appendRoleLaunchArgs(launchArgs, packConfig, adapter.harnessName, role);
     }
 
     const session = await this.#sessionManager.createSession(sessionInput);
@@ -358,7 +359,7 @@ function schemaForTool(toolName: string): JsonSchema {
     throw new Error(`Unknown MCP tool: ${toolName}`);
   }
 
-  return definition.inputSchema as JsonSchema;
+  return definition.inputSchema as unknown as JsonSchema;
 }
 
 function normalizeCli(value: string): AgentCli {

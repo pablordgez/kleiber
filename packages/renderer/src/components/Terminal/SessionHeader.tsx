@@ -4,6 +4,10 @@ import { MoreHorizontal, X } from 'lucide-react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import * as Popover from '@radix-ui/react-popover';
 
+function getSessionDisplayName(session: Session): string {
+  return (session as Session & { name?: string }).name ?? session.id.substring(0, 8);
+}
+
 export interface SessionHeaderProps {
   session: Session;
   projectName: string;
@@ -17,7 +21,7 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
   ancestorNames,
   onKill,
 }) => {
-  const sessionName = session.id.substring(0, 8);
+  const sessionName = getSessionDisplayName(session);
   const breadcrumbs = [projectName, ...ancestorNames, sessionName];
 
   return (

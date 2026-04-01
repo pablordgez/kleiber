@@ -40,6 +40,7 @@ export interface RemoteApiCredentials {
 
 export interface Session {
   id: UUID;
+  name: string;
   projectId: UUID;
   parentSessionId: UUID | null;
   type: SessionType;

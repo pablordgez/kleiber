@@ -1,33 +1,28 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import { Session, UUID, SessionType, AgentCli } from '@kleiber/shared';
 import { X } from 'lucide-react';
 import { useAppStore } from '../../store/useAppStore';
 
-const CLIS: { value: string; label: string }[] = [
+const CLIS: Array<{ value: AgentCli | 'plain'; label: string }> = [
   { value: 'plain', label: 'Plain Terminal' },
-  { value: 'claude-code', label: 'Claude Code' },
+  { value: 'claude', label: 'Claude Code' },
   { value: 'codex', label: 'Codex' },
   { value: 'opencode', label: 'OpenCode' },
-  { value: 'gemini-cli', label: 'Gemini CLI' },
+  { value: 'gemini', label: 'Gemini CLI' },
 ];
 
-const ROLES: { value: string; label: string }[] = [
-  { value: 'plain', label: 'Plain Terminal' },
-  { value: 'requirements-engineer', label: 'Requirements Engineer' },
-  { value: 'requirements-refiner', label: 'Requirements Refiner' },
-  { value: 'architect', label: 'Architect' },
-  { value: 'security-analyst', label: 'Security Analyst' },
-  { value: 'security-reviewer', label: 'Security Reviewer' },
-  { value: 'task-planner', label: 'Task Planner' },
-  { value: 'project-manager', label: 'Project Manager' },
-  { value: 'brainstormer', label: 'Brainstormer' },
-  { value: 'specification-reviewer', label: 'Specification Reviewer' },
-  { value: 'documentation-writer', label: 'Documentation Writer' },
-  { value: 'ui-ux-designer', label: 'UI/UX Designer' },
-  { value: 'test-engineer', label: 'Test Engineer' },
-  { value: 'field-tester', label: 'Field Tester' },
-];
+function formatRoleLabel(role: string): string {
+  return role
+    .split('-')
+    .map((segment) => {
+      if (segment.toLowerCase() === 'ux') {
+        return 'UI/UX';
+      }
+      return `${segment.slice(0, 1).toUpperCase()}${segment.slice(1)}`;
+    })
+    .join(' ');
+}
 
 export interface NewSessionDialogProps {
   open: boolean;
@@ -47,24 +42,76 @@ export const NewSessionDialog: React.FC<NewSessionDialogProps> = ({
   onCreated,
 }) => {
   const [name, setName] = useState('');
-  const [cli, setCli] = useState<string>('plain');
+  const [cli, setCli] = useState<AgentCli | 'plain'>('plain');
   const [role, setRole] = useState<string>('plain');
+  const [roles, setRoles] = useState<string[]>([]);
+  const [packInstalled, setPackInstalled] = useState(true);
+  const [isLoadingRoles, setIsLoadingRoles] = useState(false);
   const [yolo, setYolo] = useState(projectYoloDefault);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const addSession = useAppStore((state) => state.addSession);
 
   const isPlain = cli === 'plain' && role === 'plain';
   const yoloDisabled = !projectYoloDefault || isPlain;
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!name) return;
+  const roleOptions = useMemo(
+    () => [
+      { value: 'plain', label: 'Plain Terminal' },
+      ...roles.map((roleName) => ({ value: roleName, label: formatRoleLabel(roleName) })),
+    ],
+    [roles],
+  );
+
+  useEffect(() => {
+    if (!open) return;
+
+    let cancelled = false;
+    setIsLoadingRoles(true);
+
+    Promise.all([window.kleiber.pack.roles(), window.kleiber.pack.status()])
+      .then(([availableRoles, status]) => {
+        if (cancelled) return;
+        setPackInstalled(status.installed);
+        setRoles(availableRoles);
+      })
+      .catch((loadError) => {
+        if (cancelled) return;
+        setPackInstalled(false);
+        setRoles([]);
+        console.error('Failed to load pack roles', loadError);
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsLoadingRoles(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (role !== 'plain' && !roles.includes(role)) {
+      setRole('plain');
+    }
+  }, [role, roles]);
+
+  const handleSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!name.trim()) return;
+
+    if (role !== 'plain' && cli === 'plain') {
+      setError('Choose an agent CLI when selecting a role.');
+      return;
+    }
 
     setIsSubmitting(true);
-    try {
-      const type: SessionType =
-        role !== 'plain' ? 'agent_role' : cli !== 'plain' ? 'agent' : 'plain';
+    setError(null);
 
+    try {
+      const type: SessionType = role !== 'plain' ? 'agent_role' : cli !== 'plain' ? 'agent' : 'plain';
       const payload: {
         projectId: UUID;
         name: string;
@@ -75,13 +122,13 @@ export const NewSessionDialog: React.FC<NewSessionDialogProps> = ({
         parentSessionId?: UUID;
       } = {
         projectId,
-        name,
+        name: name.trim(),
         type,
         yolo: type !== 'plain' ? yolo : false,
       };
 
       if (parentSessionId) payload.parentSessionId = parentSessionId;
-      if (cli !== 'plain') payload.cli = cli as AgentCli;
+      if (cli !== 'plain') payload.cli = cli;
       if (role !== 'plain') payload.role = role;
 
       const session = await window.kleiber.sessions.create(payload);
@@ -92,8 +139,9 @@ export const NewSessionDialog: React.FC<NewSessionDialogProps> = ({
       setCli('plain');
       setRole('plain');
       setYolo(projectYoloDefault);
-    } catch (err) {
-      console.error('Failed to create session', err);
+    } catch (submitError: unknown) {
+      console.error('Failed to create session', submitError);
+      setError(submitError instanceof Error ? submitError.message : 'Failed to create session');
     } finally {
       setIsSubmitting(false);
     }
@@ -106,7 +154,7 @@ export const NewSessionDialog: React.FC<NewSessionDialogProps> = ({
         <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-md bg-[#18181B] border border-[#3F3F46] rounded-lg z-50 p-6">
           <div className="flex items-center justify-between mb-4">
             <Dialog.Title className="text-lg font-medium text-[#FAFAFA]">
-              New Session
+              {parentSessionId ? 'New Sub-Session' : 'New Session'}
             </Dialog.Title>
             <Dialog.Close className="text-[#A1A1AA] hover:text-[#FAFAFA] rounded-sm opacity-70 hover:opacity-100 transition-opacity">
               <X size={20} />
@@ -114,6 +162,14 @@ export const NewSessionDialog: React.FC<NewSessionDialogProps> = ({
           </div>
 
           <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+            {error && <div className="text-red-500 text-sm bg-red-500/10 p-2 rounded">{error}</div>}
+
+            {!packInstalled && (
+              <div className="text-[#F97316] text-xs bg-[#F97316]/10 border border-[#F97316]/30 p-2 rounded">
+                Agent pack is not installed globally. Role options may be unavailable.
+              </div>
+            )}
+
             <div className="flex flex-col gap-2">
               <label htmlFor="session-name" className="text-sm font-medium text-[#FAFAFA]">
                 Name
@@ -121,9 +177,9 @@ export const NewSessionDialog: React.FC<NewSessionDialogProps> = ({
               <input
                 id="session-name"
                 value={name}
-                onChange={(e) => setName(e.target.value)}
+                onChange={(event) => setName(event.target.value)}
                 className="flex h-10 w-full rounded-md border border-[#3F3F46] bg-[#09090B] px-3 py-2 text-sm text-[#FAFAFA] placeholder:text-[#A1A1AA] focus:outline-none focus:border-[#FAFAFA]"
-                placeholder="Session Name"
+                placeholder={parentSessionId ? 'Sub-session Name' : 'Session Name'}
                 required
               />
             </div>
@@ -135,12 +191,12 @@ export const NewSessionDialog: React.FC<NewSessionDialogProps> = ({
               <select
                 id="cli-select"
                 value={cli}
-                onChange={(e) => setCli(e.target.value)}
+                onChange={(event) => setCli(event.target.value as AgentCli | 'plain')}
                 className="flex h-10 w-full rounded-md border border-[#3F3F46] bg-[#09090B] px-3 py-2 text-sm text-[#FAFAFA] focus:outline-none focus:border-[#FAFAFA]"
               >
-                {CLIS.map((c) => (
-                  <option key={c.value} value={c.value}>
-                    {c.label}
+                {CLIS.map((cliOption) => (
+                  <option key={cliOption.value} value={cliOption.value}>
+                    {cliOption.label}
                   </option>
                 ))}
               </select>
@@ -153,15 +209,17 @@ export const NewSessionDialog: React.FC<NewSessionDialogProps> = ({
               <select
                 id="role-select"
                 value={role}
-                onChange={(e) => setRole(e.target.value)}
+                onChange={(event) => setRole(event.target.value)}
                 className="flex h-10 w-full rounded-md border border-[#3F3F46] bg-[#09090B] px-3 py-2 text-sm text-[#FAFAFA] focus:outline-none focus:border-[#FAFAFA]"
+                disabled={isLoadingRoles}
               >
-                {ROLES.map((r) => (
-                  <option key={r.value} value={r.value}>
-                    {r.label}
+                {roleOptions.map((roleOption) => (
+                  <option key={roleOption.value} value={roleOption.value}>
+                    {roleOption.label}
                   </option>
                 ))}
               </select>
+              {isLoadingRoles && <span className="text-xs text-[#A1A1AA]">Loading roles...</span>}
             </div>
 
             <div className="flex items-center gap-2 mt-2">
@@ -169,7 +227,7 @@ export const NewSessionDialog: React.FC<NewSessionDialogProps> = ({
                 type="checkbox"
                 id="session-yolo"
                 checked={yolo}
-                onChange={(e) => setYolo(e.target.checked)}
+                onChange={(event) => setYolo(event.target.checked)}
                 disabled={yoloDisabled}
                 className="h-4 w-4 rounded border-[#3F3F46] bg-[#09090B] disabled:opacity-50"
               />
@@ -192,7 +250,7 @@ export const NewSessionDialog: React.FC<NewSessionDialogProps> = ({
               </Dialog.Close>
               <button
                 type="submit"
-                disabled={isSubmitting || !name}
+                disabled={isSubmitting || !name.trim()}
                 className="px-4 py-2 text-sm font-medium bg-[#FAFAFA] text-[#09090B] hover:bg-[#FAFAFA]/90 rounded-md transition-colors disabled:opacity-50"
               >
                 {isSubmitting ? 'Creating...' : 'Create Session'}

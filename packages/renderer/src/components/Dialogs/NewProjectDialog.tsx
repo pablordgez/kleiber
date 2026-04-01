@@ -36,6 +36,7 @@ export const NewProjectDialog: React.FC<NewProjectDialogProps> = ({
       setYoloDefault(false);
     } catch (err) {
       console.error('Failed to create project', err);
+      window.alert('Failed to create project: ' + (err instanceof Error ? err.message : err));
     } finally {
       setIsSubmitting(false);
     }

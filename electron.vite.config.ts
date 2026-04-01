@@ -8,7 +8,7 @@ export default defineConfig({
     plugins: [externalizeDepsPlugin()],
     resolve: {
       alias: {
-        "@shared": path.resolve(__dirname, "packages/shared/src"),
+        "@kleiber/shared": path.resolve(__dirname, "packages/shared/src"),
       },
     },
     build: {
@@ -23,7 +23,7 @@ export default defineConfig({
     plugins: [externalizeDepsPlugin()],
     resolve: {
       alias: {
-        "@shared": path.resolve(__dirname, "packages/shared/src"),
+        "@kleiber/shared": path.resolve(__dirname, "packages/shared/src"),
       },
     },
     build: {
@@ -40,7 +40,7 @@ export default defineConfig({
     resolve: {
       alias: {
         "@renderer": path.resolve(__dirname, "packages/renderer/src"),
-        "@shared": path.resolve(__dirname, "packages/shared/src"),
+        "@kleiber/shared": path.resolve(__dirname, "packages/shared/src"),
       },
     },
     build: {

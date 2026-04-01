@@ -18,6 +18,7 @@ interface AppState {
   updateProject: (project: Project) => void;
   addSession: (session: Session) => void;
   removeSession: (id: UUID) => void;
+  updateSession: (session: Session) => void;
   loadProjects: () => Promise<void>;
 }
 
@@ -60,6 +61,19 @@ export const useAppStore = create<AppState>((set, get) => ({
       sessions: state.sessions.filter((s) => s.id !== id),
       selectedSessionId: state.selectedSessionId === id ? null : state.selectedSessionId,
     })),
+  updateSession: (session) =>
+    set((state) => {
+      const existing = state.sessions.find((candidate) => candidate.id === session.id);
+      if (!existing) {
+        return { sessions: [...state.sessions, session] };
+      }
+
+      return {
+        sessions: state.sessions.map((candidate) =>
+          candidate.id === session.id ? session : candidate,
+        ),
+      };
+    }),
   loadProjects: async () => {
     const projects = await window.kleiber.projects.list();
     set({ projects });

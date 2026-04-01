@@ -15,19 +15,27 @@
     "typecheck": "tsc -b"
   },
   "devDependencies": {
-    "@typescript-eslint/eslint-plugin": "^8.31.0",
-    "@typescript-eslint/parser": "^8.31.0",
+    "@tailwindcss/vite": "^4.2.2",
     "@types/node": "^22.15.17",
     "@types/react": "^18.3.23",
     "@types/react-dom": "^18.3.7",
+    "@typescript-eslint/eslint-plugin": "^8.31.0",
+    "@typescript-eslint/parser": "^8.31.0",
     "@vitejs/plugin-react": "^5.0.0",
     "electron": "^34.5.8",
     "electron-builder": "^25.1.8",
     "electron-vite": "^5.0.0",
     "eslint": "^9.23.0",
     "rimraf": "^6.0.1",
+    "tailwindcss": "^4.2.2",
     "typescript": "^5.8.3",
     "vite": "^7.0.0",
     "vitest": "^3.2.4"
+  },
+  "dependencies": {
+    "electron-log": "^5.4.3",
+    "electron-store": "^10.1.0",
+    "node-pty": "^1.1.0",
+    "yaml": "^2.8.1"
   }
 }

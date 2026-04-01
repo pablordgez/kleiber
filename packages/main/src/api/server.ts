@@ -1,18 +1,17 @@
 import { createServer } from "node:net";
 
-import type { AppSettings, RemoteApiCredentials } from "@kleiber/shared";
+import type { AppSettings } from "@kleiber/shared";
 import { DEFAULT_REMOTE_API_BIND_ADDRESS, DEFAULT_REMOTE_API_START_PORT } from "@kleiber/shared";
 import Fastify, { type FastifyInstance } from "fastify";
 import rateLimit from "@fastify/rate-limit";
+import websocket from "@fastify/websocket";
 
 import { createSigningKey, issueAuthToken, verifyPassword } from "./auth";
 import { createAuthPreHandler } from "./middleware";
-
-export interface RemoteApiStore {
-  getSettings(): AppSettings;
-  setSettings(settings: AppSettings): AppSettings;
-  getRemoteApiCredentials(): RemoteApiCredentials | null;
-}
+import { registerProjectRoutes } from "./routes/projects";
+import { registerSessionRoutes } from "./routes/sessions";
+import { type RemoteApiCreateSessionResolver, type RemoteApiPackManager, type RemoteApiSessionManager, type RemoteApiStore } from "./types";
+import { registerTerminalWebSocketRoutes, DEFAULT_MAX_WS_PAYLOAD_BYTES } from "./ws/terminal";
 
 export interface RemoteApiServerState {
   host: string;
@@ -20,9 +19,21 @@ export interface RemoteApiServerState {
 }
 
 export interface BuildRemoteApiAppOptions {
-  getCredentials: () => RemoteApiCredentials | null;
+  store: Pick<RemoteApiStore, "getRemoteApiCredentials" | "listProjects" | "getProject">;
+  packManager: Pick<RemoteApiPackManager, "readProjectConfig">;
+  sessionManager: RemoteApiSessionManager;
+  createSessionResolver: RemoteApiCreateSessionResolver;
+  mcpRuntime?: {
+    wrapperCommand: string;
+    wrapperArgs: string[];
+  };
   signingKey: Buffer;
   now?: () => number;
+  websocket?: {
+    authTimeoutMs?: number;
+    maxConnectionsPerUser?: number;
+    maxPayloadBytes?: number;
+  };
 }
 
 export async function findAvailablePort(startPort: number, host: string): Promise<number> {
@@ -66,6 +77,11 @@ export async function buildRemoteApiApp(options: BuildRemoteApiAppOptions): Prom
   await app.register(rateLimit, {
     global: false,
   });
+  await app.register(websocket, {
+    options: {
+      maxPayload: options.websocket?.maxPayloadBytes ?? DEFAULT_MAX_WS_PAYLOAD_BYTES,
+    },
+  });
 
   app.post(
     "/auth",
@@ -91,7 +107,7 @@ export async function buildRemoteApiApp(options: BuildRemoteApiAppOptions): Prom
     async (request, reply) => {
       const body = request.body as { username: string; password: string };
       const authenticated = await verifyPassword(
-        options.getCredentials(),
+        options.store.getRemoteApiCredentials(),
         body.username,
         body.password,
       );
@@ -106,14 +122,34 @@ export async function buildRemoteApiApp(options: BuildRemoteApiAppOptions): Prom
   );
 
   const authPreHandlerOptions: Parameters<typeof createAuthPreHandler>[0] = {
-    getCredentials: options.getCredentials,
+    getCredentials: () => options.store.getRemoteApiCredentials(),
     signingKey: options.signingKey,
+    publicPaths: ["/auth", "/ws/sessions/:sessionId/output", "/ws/sessions/:sessionId/input"],
   };
   if (options.now) {
     authPreHandlerOptions.now = options.now;
   }
 
   app.addHook("preHandler", createAuthPreHandler(authPreHandlerOptions));
+
+  await registerProjectRoutes(app, {
+    store: options.store,
+  });
+  await registerSessionRoutes(app, {
+    store: options.store,
+    packManager: options.packManager,
+    sessionManager: options.sessionManager,
+    createSessionResolver: options.createSessionResolver,
+    ...(options.mcpRuntime ? { mcpRuntime: options.mcpRuntime } : {}),
+  });
+  await registerTerminalWebSocketRoutes(app, {
+    sessionManager: options.sessionManager,
+    signingKey: options.signingKey,
+    now: options.now,
+    authTimeoutMs: options.websocket?.authTimeoutMs,
+    maxConnectionsPerUser: options.websocket?.maxConnectionsPerUser,
+    maxPayloadBytes: options.websocket?.maxPayloadBytes,
+  });
 
   app.get("/status", async (request) => {
     return {
@@ -128,6 +164,13 @@ export async function buildRemoteApiApp(options: BuildRemoteApiAppOptions): Prom
 
 export class RemoteApiServerController {
   readonly #store: RemoteApiStore;
+  readonly #packManager: Pick<RemoteApiPackManager, "readProjectConfig">;
+  readonly #sessionManager: RemoteApiSessionManager;
+  readonly #createSessionResolver: RemoteApiCreateSessionResolver;
+  readonly #mcpRuntime: {
+    wrapperCommand: string;
+    wrapperArgs: string[];
+  } | null;
   readonly #now: () => number;
   readonly #signingKey: Buffer;
   #app: FastifyInstance | null = null;
@@ -135,9 +178,20 @@ export class RemoteApiServerController {
 
   constructor(options: {
     store: RemoteApiStore;
+    packManager: Pick<RemoteApiPackManager, "readProjectConfig">;
+    sessionManager: RemoteApiSessionManager;
+    createSessionResolver: RemoteApiCreateSessionResolver;
+    mcpRuntime?: {
+      wrapperCommand: string;
+      wrapperArgs: string[];
+    };
     now?: () => number;
   }) {
     this.#store = options.store;
+    this.#packManager = options.packManager;
+    this.#sessionManager = options.sessionManager;
+    this.#createSessionResolver = options.createSessionResolver;
+    this.#mcpRuntime = options.mcpRuntime ?? null;
     this.#now = options.now ?? (() => Date.now());
     this.#signingKey = createSigningKey();
   }
@@ -168,7 +222,11 @@ export class RemoteApiServerController {
 
     const selectedPort = await findAvailablePort(requestedPort, host);
     const app = await buildRemoteApiApp({
-      getCredentials: () => this.#store.getRemoteApiCredentials(),
+      store: this.#store,
+      packManager: this.#packManager,
+      sessionManager: this.#sessionManager,
+      createSessionResolver: this.#createSessionResolver,
+      ...(this.#mcpRuntime ? { mcpRuntime: this.#mcpRuntime } : {}),
       signingKey: this.#signingKey,
       now: this.#now,
     });

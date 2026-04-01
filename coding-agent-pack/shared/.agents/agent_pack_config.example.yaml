@@ -1,0 +1,51 @@
+# Copy this file to `.agent_specs/agent_pack_config.yaml` and customize it.
+version: 1
+
+providers:
+  allowed:
+    - openai
+    - anthropic
+    - google
+  disallowed: []
+
+models:
+  defaults:
+    low_complexity:
+      provider: openai
+      model: gpt-5.4-mini
+    medium_complexity:
+      provider: anthropic
+      model: claude-sonnet
+    high_complexity:
+      provider: openai
+      model: gpt-5.4
+  notes:
+    - Prefer faster, cheaper models for mechanical tasks or scoped edits.
+    - Prefer stronger reasoning models for architecture, security, and ambiguous planning work.
+    - Update these values to match the actual models available in your environment.
+
+harness_adapters:
+  codex:
+    enabled: true
+    orchestration: native_subagents
+    launch_command: codex
+  claude_code:
+    enabled: true
+    orchestration: native_subagents_or_agent_teams
+    launch_command: claude
+  opencode:
+    enabled: true
+    orchestration: plugin_or_manual
+    launch_command: opencode
+  gemini_cli:
+    enabled: true
+    orchestration: experimental_subagents
+    launch_command: gemini
+
+mcp:
+  available: []
+  notes:
+    - Add any MCP servers or adapters that allow one harness to launch or orchestrate another.
+    - If empty, the project-manager should assume cross-harness launching is unavailable unless proven otherwise.
+
+agent_overrides: {}

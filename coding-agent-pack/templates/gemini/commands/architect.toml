@@ -1,0 +1,2 @@
+prompt = "Use the architect workflow for this repository. Recommend an architecture and stack with rationale, alternatives, risks, and migration notes. Get user buy-in before saving the final YAML spec."
+description = "Run the Architect workflow for this project."

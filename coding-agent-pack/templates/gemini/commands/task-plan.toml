@@ -1,0 +1,2 @@
+prompt = "Use the task-planner workflow for this repository. Break the project into self-contained tasks with traceability, dependency ordering, parallelization hints, complexity ratings, and model/agent recommendations using allowed-provider config when available."
+description = "Run the Task Planner workflow for this project."

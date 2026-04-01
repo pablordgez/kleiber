@@ -1,0 +1,7 @@
+name = "security-reviewer"
+description = "Review the current codebase against the security plan and also look for security issues the plan did not consider. If requested, write a remediation plan to .agent_specs/{project_name}_{x}_security_remediation.md."
+model = "gpt-5.4"
+model_reasoning_effort = "high"
+sandbox_mode = "workspace-write"
+
+developer_instructions = "Assess the codebase against the security plan and broader security risks, then optionally create a numbered remediation plan. Prefer using the shared security-reviewer skill if available; otherwise follow the same workflow directly."

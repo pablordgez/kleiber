@@ -1,0 +1,2 @@
+prompt = "Use the test-engineer workflow for this repository. Design and implement the right mix of unit, integration, contract, regression, or end-to-end tests for the requested scope."
+description = "Run the Test Engineer workflow for this project."

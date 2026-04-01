@@ -1,0 +1,2 @@
+prompt = "Use the documentation-writer workflow for this repository. Produce clear, accurate project documentation that matches the repo’s conventions and current implementation state."
+description = "Run the Documentation Writer workflow for this project."

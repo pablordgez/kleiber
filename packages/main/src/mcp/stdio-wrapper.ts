@@ -209,7 +209,7 @@ export class McpStdioWrapper {
 
   #pending = new Map<string, PendingParentRequest>();
   #nextRequestId = 0;
-  #stdinBuffer = Buffer.alloc(0);
+  #stdinBuffer: Buffer<ArrayBufferLike> = Buffer.alloc(0);
   #started = false;
   #teardownParentListener: (() => void) | null = null;
   #orchestratorVersion: unknown;
@@ -268,7 +268,7 @@ export class McpStdioWrapper {
     }
   };
 
-  #tryReadFrame(buffer: Buffer): { payload: string; remaining: Buffer } | null {
+  #tryReadFrame(buffer: Buffer<ArrayBufferLike>): { payload: string; remaining: Buffer<ArrayBufferLike> } | null {
     const headerEndIndex = buffer.indexOf("\r\n\r\n");
     if (headerEndIndex === -1) {
       return null;
@@ -285,7 +285,7 @@ export class McpStdioWrapper {
           message: "Invalid Content-Length header.",
         },
       });
-      return { payload: "", remaining: Buffer.alloc(0) };
+      return { payload: "", remaining: Buffer.from([]) };
     }
 
     const bodyStartIndex = headerEndIndex + 4;
@@ -296,7 +296,7 @@ export class McpStdioWrapper {
 
     return {
       payload: buffer.subarray(bodyStartIndex, bodyEndIndex).toString("utf8"),
-      remaining: buffer.subarray(bodyEndIndex),
+      remaining: Buffer.from(buffer.subarray(bodyEndIndex)),
     };
   }
 
@@ -350,7 +350,12 @@ export class McpStdioWrapper {
       return;
     }
 
-    const request = raw as JsonRpcRequest;
+    const request: JsonRpcRequest = {
+      jsonrpc: JSON_RPC_VERSION,
+      method: raw.method,
+      ...(raw.id !== undefined ? { id: raw.id as JsonRpcId } : {}),
+      ...(raw.params !== undefined ? { params: raw.params } : {}),
+    };
     if (request.id === undefined) {
       if (request.method === "notifications/initialized") {
         return;
@@ -394,8 +399,8 @@ export class McpStdioWrapper {
   }
 
   #normalizeInitializeResult(payload: unknown): Record<string, unknown> {
-    const result = isObject(payload) ? payload : {};
-    const serverInfo = isObject(result.serverInfo) ? result.serverInfo : {};
+    const result: Record<string, unknown> = isObject(payload) ? payload : {};
+    const serverInfo: Record<string, unknown> = isObject(result.serverInfo) ? result.serverInfo : {};
 
     const normalized: Record<string, unknown> = {
       protocolVersion: typeof result.protocolVersion === "string" ? result.protocolVersion : MCP_PROTOCOL_VERSION,
@@ -406,7 +411,7 @@ export class McpStdioWrapper {
       },
     };
 
-    this.#orchestratorVersion = result.version ?? normalized.serverInfo?.version;
+    this.#orchestratorVersion = result.version ?? serverInfo.version ?? "0.0.0";
     this.#orchestratorCapabilities = normalized.capabilities;
 
     return normalized;
@@ -431,7 +436,7 @@ export class McpStdioWrapper {
       return {
         name: tool.name,
         description: tool.description,
-        inputSchema: tool.inputSchema as JsonSchema,
+        inputSchema: tool.inputSchema,
       };
     });
 
@@ -486,7 +491,11 @@ export class McpStdioWrapper {
       return;
     }
 
-    const response = message as ParentToWrapperResponse;
+    if (typeof message.requestId !== "string" || typeof message.ok !== "boolean") {
+      return;
+    }
+
+    const response = message as unknown as ParentToWrapperResponse;
     const pending = this.#pending.get(response.requestId);
     if (!pending) {
       return;

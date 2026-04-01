@@ -461,7 +461,7 @@ describe("IPC handlers remediation", () => {
     registerIpcHandlers();
 
     const sessionExitHandler = mockState.onSessionEventMock.mock.calls.find(
-      ([eventName]: [string]) => eventName === "session-exited",
+      (call) => call[0] === "session-exited",
     )?.[1] as ((payload: any) => void) | undefined;
 
     sessionExitHandler?.({

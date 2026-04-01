@@ -1,6 +1,7 @@
 import path from "node:path";
 import { app, BrowserWindow, session as electronSession } from "electron";
 import { configureMainLogging, startSecurityEventLogging } from "./logging";
+import { registerIpcHandlers } from "./ipc/handlers";
 
 configureMainLogging(process.env.NODE_ENV === "development");
 
@@ -45,6 +46,8 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
+  registerIpcHandlers();
+
   // Set Content-Security-Policy on all responses
   electronSession.defaultSession.webRequest.onHeadersReceived((details, callback) => {
     callback({

@@ -58,54 +58,21 @@ export interface SessionRecord extends Session {
   pid: number | null;
 }
 
-export interface McpToolBase<Name extends string, Schema> {
+export interface McpToolBase<Name extends string> {
   name: Name;
   description: string;
-  inputSchema: Schema;
+  inputSchema: object;
 }
 
-export type SpawnSessionTool = McpToolBase<
-  "spawn_session",
-  {
-    projectId: UUID;
-    cli: AgentCli;
-    role?: string;
-    yolo?: boolean;
-    workingDirectory?: string;
-    name?: string;
-  }
->;
+export type SpawnSessionTool = McpToolBase<"spawn_session">;
 
-export type SendToSessionTool = McpToolBase<
-  "send_to_session",
-  {
-    sessionId: UUID;
-    input: string;
-  }
->;
+export type SendToSessionTool = McpToolBase<"send_to_session">;
 
-export type ReadSessionTool = McpToolBase<
-  "read_session",
-  {
-    sessionId: UUID;
-    plainText?: boolean;
-    limit?: number;
-  }
->;
+export type ReadSessionTool = McpToolBase<"read_session">;
 
-export type ListSessionsTool = McpToolBase<
-  "list_sessions",
-  {
-    projectId: UUID;
-  }
->;
+export type ListSessionsTool = McpToolBase<"list_sessions">;
 
-export type KillSessionTool = McpToolBase<
-  "kill_session",
-  {
-    sessionId: UUID;
-  }
->;
+export type KillSessionTool = McpToolBase<"kill_session">;
 
 export type McpToolSchema =
   | SpawnSessionTool

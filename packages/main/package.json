@@ -1,0 +1,15 @@
+{
+  "name": "@kleiber/main",
+  "private": true,
+  "version": "0.0.0",
+  "main": "../../dist/main/index.js",
+  "scripts": {
+    "build": "echo \"Built from root via electron-vite\"",
+    "clean": "rimraf ../../dist/main",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@kleiber/shared": "workspace:*"
+  }
+}

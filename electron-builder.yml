@@ -1,0 +1,23 @@
+appId: com.kleiber.app
+productName: Kleiber
+directories:
+  output: dist/package
+files:
+  - dist/main/**
+  - dist/preload/**
+  - dist/renderer/**
+  - package.json
+extraResources:
+  - from: coding-agent-pack
+    to: coding-agent-pack
+asar: true
+npmRebuild: false
+linux:
+  target:
+    - dir
+mac:
+  target:
+    - dir
+win:
+  target:
+    - dir

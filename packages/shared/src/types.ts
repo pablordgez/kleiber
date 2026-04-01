@@ -117,6 +117,8 @@ export interface HarnessAdapter {
   enabled: boolean;
   launch_command: string;
   orchestration: string;
+  yolo_flag?: string;
+  mcp_injection?: "env" | "argv" | "stdio" | "none" | "unknown";
 }
 
 export interface AgentPackConfig {

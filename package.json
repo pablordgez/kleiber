@@ -11,6 +11,7 @@
     "build:package": "electron-builder --config electron-builder.yml",
     "clean": "rimraf dist packages/*/dist",
     "lint": "corepack pnpm -r lint",
+    "test": "vitest run",
     "typecheck": "tsc -b"
   },
   "devDependencies": {
@@ -25,7 +26,8 @@
     "electron-vite": "^5.0.0",
     "eslint": "^9.23.0",
     "rimraf": "^6.0.1",
+    "typescript": "^5.8.3",
     "vite": "^7.0.0",
-    "typescript": "^5.8.3"
+    "vitest": "^3.2.4"
   }
 }

@@ -1,5 +1,8 @@
 import path from "node:path";
 import { app, BrowserWindow } from "electron";
+import { configureMainLogging, startSecurityEventLogging } from "./logging";
+
+configureMainLogging(process.env.NODE_ENV === "development");
 
 function createWindow(): void {
   const window = new BrowserWindow({
@@ -9,6 +12,8 @@ function createWindow(): void {
       preload: path.join(__dirname, "../preload/index.js"),
     },
   });
+
+  startSecurityEventLogging(window.webContents);
 
   if (process.env.ELECTRON_RENDERER_URL) {
     void window.loadURL(process.env.ELECTRON_RENDERER_URL);

@@ -1,6 +1,16 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type { Project, Session, AppSettings, AgentCli, SessionType, UUID } from "@kleiber/shared";
 
+interface PackStatus {
+  installed: boolean;
+  globallyInstalled?: boolean;
+  bundledRoles?: string[];
+  globalDetectionPath?: string;
+  projectConfigPath?: string;
+  projectConfigExists?: boolean;
+  projectConfigError?: string | null;
+}
+
 const api = {
   projects: {
     list: (): Promise<Project[]> => ipcRenderer.invoke("projects:list"),
@@ -12,7 +22,16 @@ const api = {
   },
   sessions: {
     list: (projectId: UUID): Promise<Session[]> => ipcRenderer.invoke("sessions:list", projectId),
-    create: (data: { projectId: UUID; name: string; type: SessionType; cli?: AgentCli; role?: string; yolo?: boolean }): Promise<Session> =>
+    create: (data: {
+      projectId: UUID;
+      parentSessionId?: UUID | null;
+      name: string;
+      type: SessionType;
+      cli?: AgentCli;
+      role?: string;
+      yolo?: boolean;
+      workingDirectory?: string;
+    }): Promise<Session> =>
       ipcRenderer.invoke("sessions:create", data),
     rename: (id: UUID, name: string): Promise<void> => ipcRenderer.invoke("sessions:rename", id, name),
     send: (id: UUID, input: string): Promise<void> => ipcRenderer.invoke("sessions:send", id, input),
@@ -32,7 +51,7 @@ const api = {
     update: (data: Partial<AppSettings>): Promise<void> => ipcRenderer.invoke("settings:update", data),
   },
   pack: {
-    status: (): Promise<{ installed: boolean; version?: string }> => ipcRenderer.invoke("pack:status"),
+    status: (projectId?: UUID): Promise<PackStatus> => ipcRenderer.invoke("pack:status", projectId),
     install: (): Promise<void> => ipcRenderer.invoke("pack:install"),
     roles: (): Promise<string[]> => ipcRenderer.invoke("pack:roles"),
   },

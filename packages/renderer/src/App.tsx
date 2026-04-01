@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { AppSettings, Project, Session, UUID, SessionType, AgentCli } from '@kleiber/shared';
+import { AppSettings, Session, UUID } from '@kleiber/shared';
 import { useAppStore } from './store/useAppStore';
 import { ProjectSidebar } from './components/Sidebar/ProjectSidebar';
 import { ProjectOverview } from './components/ProjectOverview';
@@ -7,49 +7,8 @@ import { SessionHeader } from './components/Terminal/SessionHeader';
 import { TerminalPane } from './components/Terminal/TerminalPane';
 import { NewSessionDialog } from './components/Dialogs/NewSessionDialog';
 
-declare global {
-  interface Window {
-    kleiber: {
-      projects: {
-        list: () => Promise<Project[]>;
-        create: (data: {
-          name: string;
-          directoryPath: string;
-          yoloDefault?: boolean;
-        }) => Promise<Project>;
-        remove: (id: UUID) => Promise<void>;
-        update: (id: UUID, data: Partial<Pick<Project, 'name' | 'yoloDefault'>>) => Promise<void>;
-      };
-      sessions: {
-        onUpdated: (callback: (session: Session) => void) => (() => void);
-        list: (projectId: UUID) => Promise<Session[]>;
-        create: (data: {
-          projectId: UUID;
-          name: string;
-          type: SessionType;
-          cli?: AgentCli;
-          role?: string;
-          yolo?: boolean;
-          parentSessionId?: UUID;
-        }) => Promise<Session>;
-        kill: (id: UUID) => Promise<void>;
-        rename: (id: UUID, name: string) => Promise<void>;
-        send: (id: UUID, input: string) => Promise<void>;
-        read: (id: UUID, limit?: number) => Promise<string[]>;
-      };
-      terminals: {
-        resize: (id: UUID, cols: number, rows: number) => Promise<void>;
-        onOutput: (id: UUID, callback: (data: string) => void) => (() => void);
-        onExit: (id: UUID, callback: (code: number | null) => void) => (() => void);
-      };
-      settings: {
-        get: () => Promise<AppSettings>;
-      };
-      pack: {
-        status: () => Promise<{ installed: boolean }>;
-      };
-    };
-  }
+function getSessionDisplayName(session: Session): string {
+  return (session as Session & { name?: string }).name ?? session.id.substring(0, 8);
 }
 
 export const App: React.FC = () => {
@@ -61,13 +20,13 @@ export const App: React.FC = () => {
     loadProjects,
     setSessions,
     selectSession,
-    removeSession,
     updateSession,
   } = useAppStore();
 
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [isNewSessionOpen, setIsNewSessionOpen] = useState(false);
   const [newSessionProjectId, setNewSessionProjectId] = useState<UUID | null>(null);
+  const [newSessionParentId, setNewSessionParentId] = useState<UUID | null>(null);
 
   // Ensure dark mode class is on html
   useEffect(() => {
@@ -127,17 +86,27 @@ export const App: React.FC = () => {
 
   const selectedProject = projects.find((p) => p.id === selectedProjectId) ?? null;
   const selectedSession = sessions.find((s) => s.id === selectedSessionId) ?? null;
+  const projectSessions = selectedProjectId
+    ? sessions.filter((session) => session.projectId === selectedProjectId)
+    : [];
 
   const getAncestorNames = (sessionId: UUID): string[] => {
-    const session = sessions.find((s) => s.id === sessionId);
-    if (!session || !session.parentSessionId) return [];
-    const parent = sessions.find((s) => s.id === session.parentSessionId);
-    if (!parent) return [];
-    return [...getAncestorNames(parent.id), parent.id.substring(0, 8)];
+    const names: string[] = [];
+    let current = sessions.find((session) => session.id === sessionId) ?? null;
+
+    while (current?.parentSessionId) {
+      const parent = sessions.find((session) => session.id === current?.parentSessionId) ?? null;
+      if (!parent) break;
+      names.unshift(getSessionDisplayName(parent));
+      current = parent;
+    }
+
+    return names;
   };
 
-  const handleNewSession = (projectId: UUID) => {
+  const handleNewSession = (projectId: UUID, parentSessionId?: UUID) => {
     setNewSessionProjectId(projectId);
+    setNewSessionParentId(parentSessionId ?? null);
     setIsNewSessionOpen(true);
   };
 
@@ -145,6 +114,9 @@ export const App: React.FC = () => {
     newSessionProjectId != null
       ? (projects.find((p) => p.id === newSessionProjectId) ?? selectedProject)
       : selectedProject;
+  const parentSessionDialogProps = newSessionParentId
+    ? { parentSessionId: newSessionParentId }
+    : {};
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-[#09090B] text-[#FAFAFA] font-sans">
@@ -155,6 +127,43 @@ export const App: React.FC = () => {
       />
 
       <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
+        {selectedProject && projectSessions.length > 0 && (
+          <div className="h-[36px] shrink-0 border-b border-[#3F3F46] bg-[#18181B] px-2 flex items-center gap-1 overflow-x-auto">
+            <button
+              onClick={() => selectSession(null)}
+              className={`h-[28px] px-3 rounded text-xs whitespace-nowrap transition-colors ${
+                selectedSessionId === null
+                  ? 'bg-[#27272A] text-[#FAFAFA]'
+                  : 'text-[#A1A1AA] hover:text-[#FAFAFA] hover:bg-[#27272A]'
+              }`}
+            >
+              Overview
+            </button>
+            {projectSessions.map((session) => (
+              <button
+                key={session.id}
+                onClick={() => selectSession(session.id)}
+                className={`h-[28px] max-w-[220px] px-3 rounded text-xs whitespace-nowrap flex items-center gap-2 transition-colors ${
+                  selectedSessionId === session.id
+                    ? 'bg-[#27272A] text-[#FAFAFA]'
+                    : 'text-[#A1A1AA] hover:text-[#FAFAFA] hover:bg-[#27272A]'
+                }`}
+              >
+                <span
+                  className={`h-2 w-2 rounded-full shrink-0 ${
+                    session.state === 'running'
+                      ? 'bg-[#22C55E]'
+                      : session.state === 'starting'
+                        ? 'bg-[#F59E0B]'
+                        : 'bg-[#A1A1AA]'
+                  }`}
+                />
+                <span className="truncate">{getSessionDisplayName(session)}</span>
+              </button>
+            ))}
+          </div>
+        )}
+
         {!selectedProjectId ? (
           <div className="flex-1 flex items-center justify-center text-[#A1A1AA] text-sm">
             <p>Select a project to get started</p>
@@ -173,7 +182,6 @@ export const App: React.FC = () => {
             />
             <TerminalPane
               sessionId={selectedSession.id}
-              sessionName={selectedSession.id.substring(0, 8)}
             />
           </>
         ) : selectedProject ? (
@@ -191,10 +199,15 @@ export const App: React.FC = () => {
           open={isNewSessionOpen}
           onOpenChange={(open) => {
             setIsNewSessionOpen(open);
-            if (!open) setNewSessionProjectId(null);
+            if (!open) {
+              setNewSessionProjectId(null);
+              setNewSessionParentId(null);
+            }
           }}
           projectId={activeProjectForDialog.id}
+          {...parentSessionDialogProps}
           projectYoloDefault={activeProjectForDialog.yoloDefault}
+          onCreated={(session) => selectSession(session.id)}
         />
       )}
     </div>

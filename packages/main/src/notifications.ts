@@ -1,7 +1,5 @@
 import { Notification, type BrowserWindow } from "electron";
 
-import type { Session } from "@kleiber/shared";
-
 export interface NotificationLike {
   show(): void;
 }
@@ -10,11 +8,17 @@ export interface NotificationConstructor {
   new (options: { title: string; body: string }): NotificationLike;
 }
 
-export interface SessionExitNotificationTarget {
-  session: Pick<Session, "name" | "exitCode" | "signal">;
+export interface SessionExitSummary {
+  name: string;
+  exitCode: number | null;
+  signal?: number | string | null;
 }
 
-export function formatSessionExitStatus(session: Pick<Session, "exitCode" | "signal">): string {
+export interface SessionExitNotificationTarget {
+  session: SessionExitSummary;
+}
+
+export function formatSessionExitStatus(session: Pick<SessionExitSummary, "exitCode" | "signal">): string {
   if (session.exitCode !== null && session.exitCode !== undefined) {
     return `exit code ${String(session.exitCode)}`;
   }

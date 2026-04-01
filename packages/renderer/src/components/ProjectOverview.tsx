@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Project, Session, UUID } from '@kleiber/shared';
 import { Terminal, Play, XCircle, AlertCircle, Circle } from 'lucide-react';
 import { cn } from '../lib/utils';
@@ -12,6 +12,7 @@ export interface ProjectOverviewProps {
   sessions: Session[];
   onNewSession: () => void;
   onSelectSession: (id: UUID) => void;
+  onProjectYoloChange: (nextValue: boolean) => Promise<void>;
 }
 
 const getStatusIcon = (state: string): React.ReactNode => {
@@ -32,9 +33,31 @@ export const ProjectOverview: React.FC<ProjectOverviewProps> = ({
   sessions,
   onNewSession,
   onSelectSession,
+  onProjectYoloChange,
 }) => {
   const projectSessions = sessions.filter((s) => s.projectId === project.id);
   const runningSessions = projectSessions.filter((s) => s.state === 'running');
+  const [isUpdatingYolo, setIsUpdatingYolo] = useState(false);
+  const [yoloError, setYoloError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setYoloError(null);
+    setIsUpdatingYolo(false);
+  }, [project.id, project.yoloDefault]);
+
+  const handleProjectYoloToggle = async () => {
+    setIsUpdatingYolo(true);
+    setYoloError(null);
+
+    try {
+      await onProjectYoloChange(!project.yoloDefault);
+    } catch (error) {
+      console.error('Failed to update project YOLO default', error);
+      setYoloError(error instanceof Error ? error.message : 'Failed to update project YOLO default');
+    } finally {
+      setIsUpdatingYolo(false);
+    }
+  };
 
   return (
     <div className="flex-1 overflow-y-auto bg-[#09090B] text-[#FAFAFA] p-8">
@@ -54,17 +77,34 @@ export const ProjectOverview: React.FC<ProjectOverviewProps> = ({
             </div>
             <div className="bg-[#18181B] border border-[#3F3F46] rounded-lg p-4 flex-1">
               <div className="text-[#A1A1AA] text-sm mb-1">Project YOLO</div>
-              <div
-                className={cn(
-                  'text-2xl font-bold',
-                  project.yoloDefault ? 'text-[#F97316]' : 'text-[#A1A1AA]',
-                )}
-              >
-                {project.yoloDefault ? 'Enabled' : 'Disabled'}
+              <div className="flex items-center justify-between gap-3">
+                <div
+                  className={cn(
+                    'text-2xl font-bold',
+                    project.yoloDefault ? 'text-[#F97316]' : 'text-[#A1A1AA]',
+                  )}
+                >
+                  {project.yoloDefault ? 'Enabled' : 'Disabled'}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void handleProjectYoloToggle()}
+                  disabled={isUpdatingYolo}
+                  className={cn(
+                    'rounded-md border px-3 py-1 text-xs font-medium transition',
+                    project.yoloDefault
+                      ? 'border-[#F97316]/40 text-[#FDBA74] hover:bg-[#F97316]/10'
+                      : 'border-[#3F3F46] text-[#D4D4D8] hover:bg-[#27272A]',
+                    isUpdatingYolo && 'cursor-not-allowed opacity-60',
+                  )}
+                >
+                  {isUpdatingYolo ? 'Saving…' : project.yoloDefault ? 'Disable default' : 'Enable default'}
+                </button>
               </div>
               <div className="mt-1 text-xs text-[#A1A1AA]">
                 New sessions inherit this default unless manually overridden.
               </div>
+              {yoloError && <div className="mt-2 text-xs text-[#FCA5A5]">{yoloError}</div>}
             </div>
           </div>
 

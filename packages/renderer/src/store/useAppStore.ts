@@ -62,9 +62,18 @@ export const useAppStore = create<AppState>((set, get) => ({
       selectedSessionId: state.selectedSessionId === id ? null : state.selectedSessionId,
     })),
   updateSession: (session) =>
-    set((state) => ({
-      sessions: state.sessions.map((s) => (s.id === session.id ? session : s)),
-    })),
+    set((state) => {
+      const existing = state.sessions.find((candidate) => candidate.id === session.id);
+      if (!existing) {
+        return { sessions: [...state.sessions, session] };
+      }
+
+      return {
+        sessions: state.sessions.map((candidate) =>
+          candidate.id === session.id ? session : candidate,
+        ),
+      };
+    }),
   loadProjects: async () => {
     const projects = await window.kleiber.projects.list();
     set({ projects });

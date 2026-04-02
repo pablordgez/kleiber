@@ -7,6 +7,7 @@ import { ProjectOverview } from './components/ProjectOverview';
 import { SessionHeader } from './components/Terminal/SessionHeader';
 import { TerminalPane } from './components/Terminal/TerminalPane';
 import { NewSessionDialog } from './components/Dialogs/NewSessionDialog';
+import { SettingsPanel } from './components/Settings/SettingsPanel';
 
 function getSessionDisplayName(session: Session): string {
   return (session as Session & { name?: string }).name ?? session.id.substring(0, 8);
@@ -26,6 +27,7 @@ export const App: React.FC = () => {
   } = useAppStore();
 
   const [settings, setSettings] = useState<AppSettings | null>(null);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isNewSessionOpen, setIsNewSessionOpen] = useState(false);
   const [newSessionProjectId, setNewSessionProjectId] = useState<UUID | null>(null);
   const [newSessionParentId, setNewSessionParentId] = useState<UUID | null>(null);
@@ -74,7 +76,7 @@ export const App: React.FC = () => {
       }
       if ((e.ctrlKey || e.metaKey) && e.key === ',') {
         e.preventDefault();
-        console.log('Settings shortcut — not yet implemented');
+        setIsSettingsOpen(true);
       }
     };
     window.addEventListener('keydown', handleKeyDown);
@@ -130,6 +132,7 @@ export const App: React.FC = () => {
         remoteApiEnabled={settings?.remoteApiEnabled ?? false}
         remoteApiPort={settings?.remoteApiPort ?? null}
         onNewSession={handleNewSession}
+        onOpenSettings={() => setIsSettingsOpen(true)}
       />
 
       <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
@@ -202,6 +205,8 @@ export const App: React.FC = () => {
           />
         ) : null}
       </main>
+
+      <SettingsPanel open={isSettingsOpen} onOpenChange={setIsSettingsOpen} />
 
       {activeProjectForDialog && (
         <NewSessionDialog

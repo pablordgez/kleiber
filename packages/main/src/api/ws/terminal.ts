@@ -172,6 +172,8 @@ export async function registerTerminalWebSocketRoutes(
       let exitListener:
         | ((payload: { session: { id: string; exitCode: number | null; signal?: number | string | null } }) => void)
         | null = null;
+      // Hoisted so the close handler can cancel the pending batch timer.
+      let cancelBatch: (() => void) | null = null;
 
       attachAuthenticationGate(socket, () => {
         const session = options.sessionManager.getSession(sessionId);
@@ -191,13 +193,46 @@ export async function registerTerminalWebSocketRoutes(
           });
         }
 
-        outputListener = (payload) => {
-          if (payload.sessionId === sessionId) {
-            sendJson(socket, { type: "output", sessionId, chunk: payload.chunk });
+        // Batch output chunks for up to 16 ms to reduce WebSocket message
+        // frequency on high-throughput sessions.
+        const WS_BATCH_INTERVAL_MS = 16;
+        const WS_BATCH_MAX_BYTES = 64 * 1024;
+        let wsBatchData = "";
+        let wsBatchTimer: ReturnType<typeof setTimeout> | null = null;
+
+        function flushWsBatch(): void {
+          if (wsBatchTimer !== null) {
+            clearTimeout(wsBatchTimer);
+            wsBatchTimer = null;
           }
+          if (wsBatchData.length === 0) return;
+          const data = wsBatchData;
+          wsBatchData = "";
+          sendJson(socket, { type: "output", sessionId, data });
+        }
+
+        cancelBatch = () => {
+          if (wsBatchTimer !== null) {
+            clearTimeout(wsBatchTimer);
+            wsBatchTimer = null;
+          }
+          wsBatchData = "";
+        };
+
+        outputListener = (payload) => {
+          if (payload.sessionId !== sessionId) return;
+          if (wsBatchTimer !== null) clearTimeout(wsBatchTimer);
+          wsBatchData += payload.chunk;
+          if (wsBatchData.length >= WS_BATCH_MAX_BYTES) {
+            flushWsBatch();
+            return;
+          }
+          wsBatchTimer = setTimeout(flushWsBatch, WS_BATCH_INTERVAL_MS);
         };
         exitListener = (payload) => {
           if (payload.session.id === sessionId) {
+            // Flush any buffered data before sending the exit notification.
+            flushWsBatch();
             sendJson(socket, {
               type: "exit",
               sessionId,
@@ -218,7 +253,9 @@ export async function registerTerminalWebSocketRoutes(
         if (exitListener) {
           options.sessionManager.removeListener("session-exited", exitListener);
         }
+        cancelBatch?.();
       });
+
     },
   );
 

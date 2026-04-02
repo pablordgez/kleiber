@@ -27,6 +27,8 @@ npmRebuild: false
 # Linux
 # ──────────────────────────────────────────────
 linux:
+  maintainer: Kleiber Maintainers
+  vendor: Kleiber
   target:
     - target: AppImage
       arch:
@@ -68,7 +70,5 @@ win:
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
-  installerIcon: build/icon.ico
-  uninstallerIcon: build/icon.ico
   createDesktopShortcut: true
   createStartMenuShortcut: true

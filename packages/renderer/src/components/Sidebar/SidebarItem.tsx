@@ -8,6 +8,7 @@ export interface SidebarItemProps {
   level: number;
   label: string;
   isActive: boolean;
+  isFocused?: boolean;
   isExpanded: boolean;
   hasChildren: boolean;
   statusState: SessionState | null;
@@ -34,6 +35,7 @@ export const SidebarItem: React.FC<SidebarItemProps> = ({
   level,
   label,
   isActive,
+  isFocused = false,
   isExpanded,
   hasChildren,
   statusState,
@@ -47,10 +49,12 @@ export const SidebarItem: React.FC<SidebarItemProps> = ({
 
   return (
     <div
+      data-testid={statusState !== null ? 'sidebar-session-item' : 'sidebar-project-item'}
       className={cn(
         'group flex items-center h-[30px] w-full cursor-pointer select-none text-[13px] rounded-lg',
         'text-[#999999] hover:bg-[#111111] hover:text-[#FFFFFF] transition-colors',
         isActive && 'bg-[#111111] text-[#FFFFFF]',
+        isFocused && !isActive && 'ring-1 ring-inset ring-[#444444] text-[#FFFFFF]',
         isDeep && 'border-l border-dashed border-[#1C1C1C]',
       )}
       style={{

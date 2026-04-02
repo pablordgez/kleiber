@@ -135,10 +135,43 @@ const remoteApiServer = new RemoteApiServerController({
   },
 });
 
-sessionManager.on("session-output", (payload) => {
+// IPC output batching: accumulate PTY chunks for up to 16 ms before sending to
+// the renderer.  This prevents flooding the IPC channel on high-throughput
+// sessions while keeping perceived latency well below one frame.
+const OUTPUT_BATCH_INTERVAL_MS = 16;
+const OUTPUT_BATCH_MAX_BYTES = 64 * 1024;
+
+interface OutputBatch {
+  data: string;
+  timer: ReturnType<typeof setTimeout>;
+}
+
+const outputBatches = new Map<string, OutputBatch>();
+
+function flushOutputBatch(sessionId: string): void {
+  const batch = outputBatches.get(sessionId);
+  if (!batch) return;
+  outputBatches.delete(sessionId);
+  const data = batch.data;
   BrowserWindow.getAllWindows().forEach((windowInstance) => {
-    windowInstance.webContents.send(`terminals:output:${payload.sessionId}`, payload.chunk);
+    windowInstance.webContents.send(`terminals:output:${sessionId}`, data);
   });
+}
+
+sessionManager.on("session-output", (payload) => {
+  const existing = outputBatches.get(payload.sessionId);
+  if (existing) {
+    clearTimeout(existing.timer);
+    existing.data += payload.chunk;
+    if (existing.data.length >= OUTPUT_BATCH_MAX_BYTES) {
+      flushOutputBatch(payload.sessionId);
+      return;
+    }
+    existing.timer = setTimeout(() => flushOutputBatch(payload.sessionId), OUTPUT_BATCH_INTERVAL_MS);
+  } else {
+    const timer = setTimeout(() => flushOutputBatch(payload.sessionId), OUTPUT_BATCH_INTERVAL_MS);
+    outputBatches.set(payload.sessionId, { data: payload.chunk, timer });
+  }
 });
 sessionManager.on("session-exited", (payload) => {
   BrowserWindow.getAllWindows().forEach((windowInstance) => {

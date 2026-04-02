@@ -28,6 +28,13 @@ export const IPC_CHANNELS = {
     output: "terminals:output",
     exit: "terminals:exit",
   },
+  shortcuts: {
+    newProject: "shortcut:new-project",
+    newSession: "shortcut:new-session",
+    newSubSession: "shortcut:new-sub-session",
+    killSession: "shortcut:kill-session",
+    openSettings: "shortcut:open-settings",
+  },
 } as const;
 
 type ChannelGroup = (typeof IPC_CHANNELS)[keyof typeof IPC_CHANNELS];

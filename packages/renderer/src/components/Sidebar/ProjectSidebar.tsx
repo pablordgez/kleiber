@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import { Plus, Settings } from 'lucide-react';
 import { useAppStore } from '../../store/useAppStore';
 import { SidebarItem } from './SidebarItem';
@@ -10,16 +10,26 @@ function getSessionDisplayName(session: Session): string {
   return (session as Session & { name?: string }).name ?? session.id.substring(0, 8);
 }
 
+/** A flat entry representing a visible sidebar row for keyboard navigation. */
+interface NavEntry {
+  id: UUID;
+  onSelect: () => void;
+}
+
 export interface ProjectSidebarProps {
   remoteApiEnabled: boolean;
   remoteApiPort: number | null;
   onNewSession?: (projectId: UUID, parentSessionId?: UUID) => void;
+  newProjectOpen?: boolean;
+  onNewProjectOpenChange?: (open: boolean) => void;
 }
 
 export const ProjectSidebar: React.FC<ProjectSidebarProps> = ({
   remoteApiEnabled,
   remoteApiPort,
   onNewSession,
+  newProjectOpen,
+  onNewProjectOpenChange,
 }) => {
   const {
     projects,
@@ -34,9 +44,69 @@ export const ProjectSidebar: React.FC<ProjectSidebarProps> = ({
     removeProject,
   } = useAppStore();
 
-  const [isNewProjectOpen, setIsNewProjectOpen] = useState(false);
+  const [isNewProjectOpenInternal, setIsNewProjectOpenInternal] = useState(false);
+  const isNewProjectOpen = newProjectOpen ?? isNewProjectOpenInternal;
+  const setIsNewProjectOpen = onNewProjectOpenChange ?? setIsNewProjectOpenInternal;
 
-  const renderSessions = (projectId: UUID, parentId: UUID | null, level: number): React.ReactNode => {
+  const [focusedIndex, setFocusedIndex] = useState<number>(-1);
+
+  /** Build the flat list of visible nav entries (projects + visible sessions). */
+  const buildNavEntries = useCallback(
+    (projectId: UUID, parentId: UUID | null, entries: NavEntry[]): void => {
+      const childSessions = sessions.filter(
+        (s) => s.projectId === projectId && s.parentSessionId === parentId,
+      );
+      for (const session of childSessions) {
+        entries.push({ id: session.id, onSelect: () => selectSession(session.id) });
+        if (expandedIds.has(session.id)) {
+          buildNavEntries(projectId, session.id, entries);
+        }
+      }
+    },
+    [sessions, expandedIds, selectSession],
+  );
+
+  const getNavEntries = useCallback((): NavEntry[] => {
+    const entries: NavEntry[] = [];
+    for (const project of projects) {
+      entries.push({
+        id: project.id,
+        onSelect: () => {
+          selectProject(project.id);
+          if (!expandedIds.has(project.id)) toggleExpanded(project.id);
+        },
+      });
+      if (expandedIds.has(project.id)) {
+        buildNavEntries(project.id, null, entries);
+      }
+    }
+    return entries;
+  }, [projects, expandedIds, selectProject, toggleExpanded, buildNavEntries]);
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    const entries = getNavEntries();
+    if (entries.length === 0) return;
+
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setFocusedIndex((prev) => Math.min(prev + 1, entries.length - 1));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setFocusedIndex((prev) => Math.max(prev - 1, 0));
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (focusedIndex >= 0 && focusedIndex < entries.length) {
+        entries[focusedIndex]?.onSelect();
+      }
+    }
+  };
+
+  const renderSessions = (
+    projectId: UUID,
+    parentId: UUID | null,
+    level: number,
+    navEntries: NavEntry[],
+  ): React.ReactNode => {
     const childSessions = sessions.filter(
       (s) => s.projectId === projectId && s.parentSessionId === parentId,
     );
@@ -46,6 +116,8 @@ export const ProjectSidebar: React.FC<ProjectSidebarProps> = ({
       const isExpanded = expandedIds.has(session.id);
       const hasChildren = sessions.some((s) => s.parentSessionId === session.id);
       const isActive = selectedSessionId === session.id;
+      const navIdx = navEntries.findIndex((e) => e.id === session.id);
+      const isFocused = navIdx !== -1 && focusedIndex === navIdx;
 
       return (
         <React.Fragment key={session.id}>
@@ -53,6 +125,7 @@ export const ProjectSidebar: React.FC<ProjectSidebarProps> = ({
             level={level}
             label={getSessionDisplayName(session)}
             isActive={isActive}
+            isFocused={isFocused}
             isExpanded={isExpanded}
             hasChildren={hasChildren}
             statusState={session.state}
@@ -74,14 +147,21 @@ export const ProjectSidebar: React.FC<ProjectSidebarProps> = ({
               },
             ]}
           />
-          {isExpanded && renderSessions(projectId, session.id, level + 1)}
+          {isExpanded && renderSessions(projectId, session.id, level + 1, navEntries)}
         </React.Fragment>
       );
     });
   };
 
+  const navEntries = getNavEntries();
+
   return (
-    <div className="flex flex-col w-[220px] h-full bg-[#000000] border-r border-[#1C1C1C] text-[#FFFFFF] shrink-0">
+    <div
+      className="flex flex-col w-[220px] h-full bg-[#000000] border-r border-[#1C1C1C] text-[#FFFFFF] shrink-0"
+      tabIndex={0}
+      onKeyDown={handleKeyDown}
+      onBlur={() => setFocusedIndex(-1)}
+    >
       {/* Header */}
       <div className="px-3 pt-4 pb-3">
         <button
@@ -101,6 +181,8 @@ export const ProjectSidebar: React.FC<ProjectSidebarProps> = ({
             (s) => s.projectId === project.id && s.parentSessionId === null,
           );
           const isActive = selectedProjectId === project.id && selectedSessionId === null;
+          const navIdx = navEntries.findIndex((e) => e.id === project.id);
+          const isFocused = navIdx !== -1 && focusedIndex === navIdx;
 
           return (
             <React.Fragment key={project.id}>
@@ -108,6 +190,7 @@ export const ProjectSidebar: React.FC<ProjectSidebarProps> = ({
                 level={0}
                 label={project.name}
                 isActive={isActive}
+                isFocused={isFocused}
                 isExpanded={isExpanded}
                 hasChildren={hasChildren}
                 statusState={null}
@@ -145,7 +228,7 @@ export const ProjectSidebar: React.FC<ProjectSidebarProps> = ({
                   },
                 ]}
               />
-              {isExpanded && renderSessions(project.id, null, 1)}
+              {isExpanded && renderSessions(project.id, null, 1, navEntries)}
             </React.Fragment>
           );
         })}

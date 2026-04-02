@@ -1,23 +1,74 @@
 appId: com.kleiber.app
 productName: Kleiber
+
 directories:
   output: dist/package
+
+# Files included in the asar bundle
 files:
   - dist/main/**
   - dist/preload/**
   - dist/renderer/**
   - package.json
+
+# Extra resources copied outside the asar (accessible at runtime via process.resourcesPath)
 extraResources:
   - from: coding-agent-pack
     to: coding-agent-pack
+  - from: dist/web
+    to: web
+    filter:
+      - "**/*"
+
 asar: true
 npmRebuild: false
+
+# ──────────────────────────────────────────────
+# Linux
+# ──────────────────────────────────────────────
 linux:
   target:
-    - dir
+    - target: AppImage
+      arch:
+        - x64
+    - target: deb
+      arch:
+        - x64
+  category: Utility
+
+# ──────────────────────────────────────────────
+# macOS
+# ──────────────────────────────────────────────
 mac:
   target:
-    - dir
+    - target: dmg
+      arch:
+        - x64
+        - arm64
+  # Code signing:
+  # - Set identity: null to skip signing (CI / unsigned builds)
+  # - Replace null with your Developer ID to enable signing, e.g.:
+  #   identity: "Developer ID Application: Your Name (TEAMID)"
+  identity: null
+  # Notarisation: set APPLE_ID, APPLE_ID_PASSWORD, APPLE_TEAM_ID env vars
+  # notarize: true
+
+# ──────────────────────────────────────────────
+# Windows
+# ──────────────────────────────────────────────
 win:
   target:
-    - dir
+    - target: nsis
+      arch:
+        - x64
+  # Code signing (uncomment and fill in to enable):
+  # certificateFile: path/to/cert.pfx
+  # certificatePassword: ${WIN_CERT_PASSWORD}
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  installerIcon: build/icon.ico
+  uninstallerIcon: build/icon.ico
+  createDesktopShortcut: true
+  createStartMenuShortcut: true

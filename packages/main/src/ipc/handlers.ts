@@ -1,12 +1,23 @@
+import { accessSync, constants as fsConstants } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
-import { ipcMain, BrowserWindow } from "electron";
+import { ipcMain, BrowserWindow, dialog } from "electron";
 import { IPC_CHANNELS, SUPPORTED_AGENT_CLIS } from "@kleiber/shared";
 import log from "electron-log";
-import type { AgentCli, AgentPackConfig, AppSettings, Project, Session, SessionType } from "@kleiber/shared";
+import type {
+  AgentCli,
+  AgentPackConfig,
+  AppSettings,
+  Project,
+  RemoteApiCredentials,
+  RemoteApiCredentialsSummary,
+  Session,
+  SessionType,
+} from "@kleiber/shared";
 import { McpOrchestrator, createMcpSocketBridgeServer } from "../mcp";
 import type { ParentToWrapperResponse, WrapperToParentRequest } from "../mcp";
 import { RemoteApiServerController } from "../api/server";
+import { hashPassword } from "../api/auth";
 import type { RemoteApiPackManager, RemoteApiStore } from "../api/types";
 import { SessionManager, type McpLaunchConfig } from "../sessions/session-manager";
 import { AgentPackManager } from "../pack/agent-pack-manager";
@@ -37,12 +48,14 @@ const DEFAULT_PACK_CONFIG: AgentPackConfig = {
       enabled: true,
       orchestration: "native_subagents",
       launch_command: "codex",
+      yolo_flag: "--dangerously-bypass-approvals-and-sandbox",
       mcp_injection: "argv",
     },
     claude_code: {
       enabled: true,
       orchestration: "native_subagents_or_agent_teams",
       launch_command: "claude",
+      yolo_flag: "--dangerously-skip-permissions",
       mcp_injection: "env",
     },
     opencode: {
@@ -55,6 +68,7 @@ const DEFAULT_PACK_CONFIG: AgentPackConfig = {
       enabled: true,
       orchestration: "experimental_subagents",
       launch_command: "gemini",
+      yolo_flag: "--yolo",
       mcp_injection: "env",
     },
   },
@@ -75,23 +89,36 @@ const DEFAULT_PACK_CONFIG: AgentPackConfig = {
         "mcp_servers.kleiber.env.KLEIBER_PROJECT_ID={projectId}",
         "-c",
         "mcp_servers.kleiber.env.KLEIBER_MCP_SOCKET_PATH={mcpSocketPath}",
+        "-c",
+        "mcp_servers.kleiber.env.KLEIBER_MCP_DEBUG_LOG_PATH={mcpDebugLogPathJson}",
+        "-c",
+        'mcp_servers.kleiber.env.ELECTRON_RUN_AS_NODE="1"',
       ],
     },
     opencode: {
       mcp_env_template: {
         OPENCODE_CONFIG_CONTENT:
-          '{"$schema":"https://opencode.ai/config.json","mcp":{"kleiber":{"type":"local","enabled":true,"command":{wrapperCommandAndArgsJson},"environment":{"KLEIBER_SESSION_ID":"{sessionId}","KLEIBER_PROJECT_ID":"{projectId}","KLEIBER_MCP_SOCKET_PATH":"{mcpSocketPath}"}}}}',
+          '{"$schema":"https://opencode.ai/config.json","mcp":{"kleiber":{"type":"local","enabled":true,"command":{wrapperCommandAndArgsJson},"environment":{"KLEIBER_SESSION_ID":"{sessionId}","KLEIBER_PROJECT_ID":"{projectId}","KLEIBER_MCP_SOCKET_PATH":"{mcpSocketPath}","KLEIBER_MCP_DEBUG_LOG_PATH":"{mcpDebugLogPath}","ELECTRON_RUN_AS_NODE":"1"}}}}',
       },
+    },
+    gemini_cli: {
+      mcp_env_template: {
+        GEMINI_CLI_SYSTEM_SETTINGS_PATH: "{mcpConfigPath}",
+      },
+      mcp_config_file_name: "gemini-settings.json",
+      mcp_config_content:
+        '{"mcpServers":{"kleiber":{"command":{wrapperCommandJson},"args":{wrapperArgsJson},"env":{"KLEIBER_SESSION_ID":"{sessionId}","KLEIBER_PROJECT_ID":"{projectId}","KLEIBER_MCP_SOCKET_PATH":"{mcpSocketPath}","KLEIBER_MCP_DEBUG_LOG_PATH":"{mcpDebugLogPath}","ELECTRON_RUN_AS_NODE":"1"}}}}',
     },
   },
 };
 
-const mcpWrapperScriptPath = path.resolve(__dirname, "../mcp/stdio-wrapper.js");
+const mcpWrapperScriptPath = path.resolve(__dirname, "mcp/stdio-wrapper.js");
 
 export const sessionManager = new SessionManager({
-  mcpWrapperFactory: ({ sessionId }) =>
+  mcpWrapperFactory: ({ sessionId, workingDirectory }) =>
     createMcpSocketBridgeServer({
       sessionId,
+      workingDirectory,
       onRequest: async (message: WrapperToParentRequest): Promise<ParentToWrapperResponse> => {
         const response: ParentToWrapperResponse = {
           kind: "kleiber.mcp.response",
@@ -190,6 +217,14 @@ sessionManager.on("session-updated", (payload) => {
     windowInstance.webContents.send(IPC_CHANNELS.sessions.updated, payload.session);
   });
 });
+sessionManager.on("session-deleted", (payload) => {
+  for (const deletedSessionId of payload.deletedSessionIds) {
+    flushOutputBatch(deletedSessionId);
+  }
+  BrowserWindow.getAllWindows().forEach((windowInstance) => {
+    windowInstance.webContents.send(IPC_CHANNELS.sessions.removed, payload.deletedSessionIds);
+  });
+});
 
 const CLI_ALIASES: Readonly<Record<string, AgentCli>> = {
   "claude-code": "claude",
@@ -201,7 +236,6 @@ const CLI_ALIASES: Readonly<Record<string, AgentCli>> = {
 interface CreateProjectIpcPayload {
   name: string;
   directoryPath: string;
-  yoloDefault?: boolean;
 }
 
 interface CreateSessionIpcPayload {
@@ -291,7 +325,7 @@ function addRoleLaunchArgs(
   args: string[],
   override: Record<string, unknown>,
   role: string,
-): void {
+): boolean {
   const roleFlag =
     typeof override.role_flag === "string"
       ? override.role_flag
@@ -300,7 +334,7 @@ function addRoleLaunchArgs(
         : null;
   if (roleFlag) {
     args.push(roleFlag, role);
-    return;
+    return true;
   }
 
   const roleTemplate =
@@ -311,14 +345,134 @@ function addRoleLaunchArgs(
         : null;
   if (roleTemplate) {
     args.push(...roleTemplate.map((entry) => entry.replaceAll("{role}", role)));
-    return;
+    return true;
   }
 
   const roleAsPositional =
     override.role_as_positional === true || override.roleAsPositional === true;
   if (roleAsPositional) {
     args.push(role);
+    return true;
   }
+
+  return false;
+}
+
+function mergePackConfig(projectConfig: AgentPackConfig | null): AgentPackConfig {
+  if (!projectConfig) {
+    return DEFAULT_PACK_CONFIG;
+  }
+
+  const mergedAgentOverrides = Object.fromEntries(
+    [...new Set([
+      ...Object.keys(DEFAULT_PACK_CONFIG.agent_overrides),
+      ...Object.keys(projectConfig.agent_overrides),
+    ])].map((key) => [
+      key,
+      mergeUnknownRecord(
+        DEFAULT_PACK_CONFIG.agent_overrides[key],
+        projectConfig.agent_overrides[key],
+      ),
+    ]),
+  );
+
+  return {
+    ...DEFAULT_PACK_CONFIG,
+    ...projectConfig,
+    providers: {
+      ...DEFAULT_PACK_CONFIG.providers,
+      ...projectConfig.providers,
+    },
+    models: {
+      ...DEFAULT_PACK_CONFIG.models,
+      ...projectConfig.models,
+      defaults: {
+        ...DEFAULT_PACK_CONFIG.models.defaults,
+        ...projectConfig.models.defaults,
+      },
+      notes: projectConfig.models.notes,
+    },
+    mcp: {
+      ...DEFAULT_PACK_CONFIG.mcp,
+      ...projectConfig.mcp,
+    },
+    harness_adapters: {
+      ...DEFAULT_PACK_CONFIG.harness_adapters,
+      ...projectConfig.harness_adapters,
+    },
+    agent_overrides: {
+      ...mergedAgentOverrides,
+    },
+  };
+}
+
+function mergeUnknownRecord(
+  baseValue: unknown,
+  overrideValue: unknown,
+): Record<string, unknown> {
+  const base =
+    baseValue && typeof baseValue === "object" && !Array.isArray(baseValue)
+      ? (baseValue as Record<string, unknown>)
+      : {};
+  const override =
+    overrideValue && typeof overrideValue === "object" && !Array.isArray(overrideValue)
+      ? (overrideValue as Record<string, unknown>)
+      : {};
+
+  return {
+    ...base,
+    ...override,
+  };
+}
+
+function commandExists(command: string): boolean {
+  const trimmed = command.trim();
+  if (!trimmed) {
+    return false;
+  }
+
+  if (path.isAbsolute(trimmed)) {
+    return isExecutableFile(trimmed);
+  }
+
+  const pathEntries = (process.env.PATH ?? "").split(path.delimiter).filter(Boolean);
+  const candidates =
+    process.platform === "win32"
+      ? [
+          trimmed,
+          ...((process.env.PATHEXT ?? ".EXE;.CMD;.BAT;.COM")
+            .split(";")
+            .filter(Boolean)
+            .map((ext) =>
+              trimmed.toLowerCase().endsWith(ext.toLowerCase()) ? trimmed : `${trimmed}${ext.toLowerCase()}`,
+            )),
+        ]
+      : [trimmed];
+
+  return pathEntries.some((entry) =>
+    candidates.some((candidate) => isExecutableFile(path.join(entry, candidate))),
+  );
+}
+
+function isInactiveSessionError(error: unknown): boolean {
+  return error instanceof Error && /is not running\./u.test(error.message);
+}
+
+function isExecutableFile(filePath: string): boolean {
+  try {
+    accessSync(filePath, process.platform === "win32" ? fsConstants.F_OK : fsConstants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function buildCodexAgentBootstrapPrompt(role: string): string {
+  return [
+    `Use the ${role} agent workflow for this repository.`,
+    `Before doing anything else, read .codex/agents/${role}.toml if it exists and adopt its description and developer_instructions for this top-level session.`,
+    "Then briefly state that the agent context is loaded and wait for the user's task.",
+  ].join(" ");
 }
 
 export async function resolveSessionCreateOptions(
@@ -347,6 +501,7 @@ export async function resolveSessionCreateOptions(
       command: string;
       args: string[];
       env: NodeJS.ProcessEnv;
+      prompt?: string;
     };
     mcpEnabled?: boolean;
     mcpLaunchConfig?: McpLaunchConfig | null;
@@ -376,6 +531,7 @@ export async function resolveSessionCreateOptions(
       command: string;
       args: string[];
       env: NodeJS.ProcessEnv;
+      prompt?: string;
     };
     mcpEnabled?: boolean;
     mcpLaunchConfig?: McpLaunchConfig | null;
@@ -386,7 +542,7 @@ export async function resolveSessionCreateOptions(
     cli: normalizedCli,
     role,
     ...(payload.yolo !== undefined ? { requestedYolo: payload.yolo } : {}),
-    defaultYolo: project.yoloDefault,
+    defaultYolo: false,
     name: payload.name,
     workingDirectory,
   };
@@ -399,8 +555,7 @@ export async function resolveSessionCreateOptions(
     throw new Error("Agent sessions require a supported CLI identifier.");
   }
 
-  const packConfig =
-    (await options.packManager.readProjectConfig(project.directoryPath)) ?? DEFAULT_PACK_CONFIG;
+  const packConfig = mergePackConfig(await options.packManager.readProjectConfig(project.directoryPath));
   const adapter = resolveHarnessAdapter(packConfig, normalizedCli);
   if (!adapter.enabled) {
     throw new Error(`CLI "${normalizedCli}" is disabled in agent_pack_config.yaml.`);
@@ -409,9 +564,13 @@ export async function resolveSessionCreateOptions(
   const canonicalCli = normalizeCliIdentifier(adapter.launchCommand) ?? normalizedCli;
   const override = resolveAgentOverride(packConfig, adapter.harnessName);
   const launchArgs: string[] = [];
+  let launchPrompt: string | undefined;
 
   if (role) {
-    addRoleLaunchArgs(launchArgs, override, role);
+    const usedRoleActivation = addRoleLaunchArgs(launchArgs, override, role);
+    if (!usedRoleActivation && canonicalCli === "codex") {
+      launchPrompt = buildCodexAgentBootstrapPrompt(role);
+    }
   }
 
   if (payload.yolo === true && adapter.yoloFlag) {
@@ -427,6 +586,7 @@ export async function resolveSessionCreateOptions(
     command: adapter.launchCommand,
     args: launchArgs,
     env: role ? { KLEIBER_AGENT_ROLE: role } : {},
+    ...(launchPrompt ? { prompt: launchPrompt } : {}),
   };
   createSessionInput.mcpEnabled = Boolean(mcpLaunchConfig);
   createSessionInput.mcpLaunchConfig = mcpLaunchConfig;
@@ -445,6 +605,18 @@ function resolveMcpLaunchConfig(
 
   const argsTemplate = readStringArrayOverride(override, ["mcp_args_template", "mcpArgsTemplate"]);
   const envTemplate = readStringRecordOverride(override, ["mcp_env_template", "mcpEnvTemplate"]) ?? {};
+  const configContentTemplate =
+    typeof override.mcp_config_content === "string"
+      ? override.mcp_config_content
+      : typeof override.mcpConfigContent === "string"
+        ? override.mcpConfigContent
+        : null;
+  const configFileName =
+    typeof override.mcp_config_file_name === "string"
+      ? override.mcp_config_file_name
+      : typeof override.mcpConfigFileName === "string"
+        ? override.mcpConfigFileName
+        : null;
 
   if (injectionMethod === "argv" && !argsTemplate) {
     return null;
@@ -456,6 +628,8 @@ function resolveMcpLaunchConfig(
     wrapperArgs: runtime.wrapperArgs,
     ...(argsTemplate ? { argsTemplate } : {}),
     envTemplate,
+    ...(configContentTemplate ? { configContentTemplate } : {}),
+    ...(configFileName ? { configFileName } : {}),
   };
 }
 
@@ -480,18 +654,32 @@ export function registerIpcHandlers(): void {
         id: crypto.randomUUID(),
         name: data.name,
         directoryPath,
-        yoloDefault: data.yoloDefault ?? false,
         createdAt: new Date().toISOString(),
       });
     }
   );
+  ipcMain.handle(IPC_CHANNELS.projects.pickDirectory, async (): Promise<string | null> => {
+    const focusedWindow = BrowserWindow.getFocusedWindow();
+    const options: Electron.OpenDialogOptions = {
+      properties: ["openDirectory", "createDirectory", "promptToCreate"],
+    };
+    const result = focusedWindow
+      ? await dialog.showOpenDialog(focusedWindow, options)
+      : await dialog.showOpenDialog(options);
+    if (result.canceled) {
+      return null;
+    }
+
+    const selectedPath = result.filePaths[0];
+    return selectedPath ? path.resolve(selectedPath) : null;
+  });
 
   ipcMain.handle(IPC_CHANNELS.projects.remove, async (_e, id: string): Promise<void> => {
     log.debug("IPC: projects:remove", id);
     store.removeProject(id);
   });
 
-  ipcMain.handle(IPC_CHANNELS.projects.update, async (_e, id: string, data: Partial<Pick<Project, "name" | "yoloDefault">>): Promise<void> => {
+  ipcMain.handle(IPC_CHANNELS.projects.update, async (_e, id: string, data: Partial<Pick<Project, "name">>): Promise<void> => {
     log.debug("IPC: projects:update", id, data);
     const project = store.getProject(id);
     if (!project) throw new Error(`Project ${id} not found`);
@@ -537,7 +725,9 @@ export function registerIpcHandlers(): void {
     try {
       sessionManager.sendToSession(id, input);
     } catch (e) {
-      log.error(e);
+      if (!isInactiveSessionError(e)) {
+        log.error(e);
+      }
     }
   });
 
@@ -559,13 +749,38 @@ export function registerIpcHandlers(): void {
     }
   });
 
+  ipcMain.handle(IPC_CHANNELS.sessions.delete, async (_e, id: string): Promise<void> => {
+    try {
+      sessionManager.deleteSession(id);
+    } catch (e) {
+      log.error(e);
+      throw e;
+    }
+  });
+
   // --- Settings ---
   ipcMain.handle(IPC_CHANNELS.settings.get, async (): Promise<AppSettings> => store.getSettings());
-  ipcMain.handle(IPC_CHANNELS.settings.update, async (_e, data: unknown): Promise<void> => {
+  ipcMain.handle(IPC_CHANNELS.settings.update, async (_e, data: unknown): Promise<AppSettings> => {
     const currentSettings = store.getSettings();
     const nextSettings = resolveSettingsUpdate(currentSettings, data);
     store.setSettings(nextSettings);
-    await remoteApiServer.applySettings(nextSettings);
+    return await remoteApiServer.applySettings(nextSettings);
+  });
+  ipcMain.handle(
+    IPC_CHANNELS.remoteApiCredentials.get,
+    async (): Promise<RemoteApiCredentialsSummary> =>
+      summarizeRemoteApiCredentials(store.getRemoteApiCredentials()),
+  );
+  ipcMain.handle(IPC_CHANNELS.remoteApiCredentials.update, async (_e, data: unknown) => {
+    const nextCredentials = await resolveRemoteApiCredentialsUpdate(
+      store.getRemoteApiCredentials(),
+      data,
+    );
+    store.setRemoteApiCredentials(nextCredentials);
+    return summarizeRemoteApiCredentials(nextCredentials);
+  });
+  ipcMain.handle(IPC_CHANNELS.remoteApiCredentials.clear, async (): Promise<void> => {
+    store.clearRemoteApiCredentials();
   });
 
   // --- Pack ---
@@ -581,6 +796,15 @@ export function registerIpcHandlers(): void {
       projectConfigExists: status.projectConfigExists,
       projectConfigError: status.projectConfigError,
     };
+  });
+  ipcMain.handle(IPC_CHANNELS.pack.detectCli, async (_e, cliIdentifier: string): Promise<boolean> => {
+    const cli = normalizeCliIdentifier(cliIdentifier);
+    if (!cli) {
+      return false;
+    }
+
+    const adapter = resolveHarnessAdapter(DEFAULT_PACK_CONFIG, cli);
+    return commandExists(adapter.launchCommand);
   });
   ipcMain.handle(IPC_CHANNELS.pack.install, async (): Promise<void> => {
     const result = await agentPackManager.installGlobal();
@@ -601,7 +825,9 @@ export function registerIpcHandlers(): void {
       try {
         sessionManager.resizeSession(sessionId, { columns: cols, rows });
       } catch (e) {
-        log.error(e);
+        if (!isInactiveSessionError(e)) {
+          log.error(e);
+        }
       }
     }
   );
@@ -649,5 +875,51 @@ function resolveSettingsUpdate(currentSettings: AppSettings, data: unknown): App
   return {
     ...nextSettings,
     remoteApiBindAddress: nextSettings.remoteApiBindAddress.trim(),
+  };
+}
+
+function summarizeRemoteApiCredentials(
+  credentials: RemoteApiCredentials | null,
+): RemoteApiCredentialsSummary {
+  return {
+    username: credentials?.username ?? "",
+    hasPassword: Boolean(credentials?.passwordHash),
+  };
+}
+
+async function resolveRemoteApiCredentialsUpdate(
+  currentCredentials: RemoteApiCredentials | null,
+  data: unknown,
+): Promise<RemoteApiCredentials> {
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
+    throw new Error("Remote API credential payload must be an object.");
+  }
+
+  const { username, password } = data as {
+    username?: unknown;
+    password?: unknown;
+  };
+
+  if (typeof username !== "string" || username.trim().length === 0) {
+    throw new Error("Remote API username must be a non-empty string.");
+  }
+
+  if (typeof password !== "string") {
+    throw new Error("Remote API password must be a string.");
+  }
+
+  const trimmedUsername = username.trim();
+  const nextPasswordHash =
+    password.length > 0
+      ? await hashPassword(password)
+      : currentCredentials?.passwordHash ?? null;
+
+  if (!nextPasswordHash) {
+    throw new Error("Remote API password is required.");
+  }
+
+  return {
+    username: trimmedUsername,
+    passwordHash: nextPasswordHash,
   };
 }

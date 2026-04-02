@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { UUID } from '@kleiber/shared';
+import { SessionState, Theme, UUID } from '@kleiber/shared';
 import { Terminal } from 'xterm';
 import { FitAddon } from 'xterm-addon-fit';
 import 'xterm/css/xterm.css';
@@ -9,15 +9,47 @@ const LAZY_DISPOSE_DELAY_MS = 5 * 60 * 1_000; // 5 minutes
 
 export interface TerminalPaneProps {
   sessionId: UUID;
+  state: SessionState;
+  theme: Theme;
 }
 
-export const TerminalPane: React.FC<TerminalPaneProps> = ({ sessionId }) => {
+type TerminalTheme = {
+  background: string;
+  foreground: string;
+  cursor: string;
+  cursorAccent: string;
+  selectionBackground: string;
+};
+
+const TERMINAL_THEMES: Record<Theme, TerminalTheme> = {
+  dark: {
+    background: '#000000',
+    foreground: '#E5E5E5',
+    cursor: '#FFFFFF',
+    cursorAccent: '#000000',
+    selectionBackground: '#FFFFFF20',
+  },
+  light: {
+    background: '#F6F2EA',
+    foreground: '#1B1B1B',
+    cursor: '#1B1B1B',
+    cursorAccent: '#F6F2EA',
+    selectionBackground: '#1B1B1B20',
+  },
+};
+
+export const TerminalPane: React.FC<TerminalPaneProps> = ({ sessionId, state, theme }) => {
   const terminalRef = useRef<HTMLDivElement>(null);
   const term = useRef<Terminal | null>(null);
   const fitAddon = useRef<FitAddon | null>(null);
   const disposeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const acceptsInputRef = useRef(state === 'running');
   const [error, setError] = useState<string | null>(null);
   const [sessionEnded, setSessionEnded] = useState(false);
+
+  useEffect(() => {
+    acceptsInputRef.current = state === 'running';
+  }, [state]);
 
   useEffect(() => {
     // If the xterm instance was lazily disposed from a previous mount, clear
@@ -36,16 +68,21 @@ export const TerminalPane: React.FC<TerminalPaneProps> = ({ sessionId }) => {
     // Reuse an existing (not yet disposed) Terminal if we have one.
     if (!term.current) {
       term.current = new Terminal({
-        theme: {
-          background: '#000000',
-          foreground: '#E5E5E5',
-          cursor: '#FFFFFF',
-          cursorAccent: '#000000',
-          selectionBackground: '#FFFFFF20',
-        },
+        theme: TERMINAL_THEMES[theme],
         fontFamily: 'JetBrains Mono, Fira Code, Menlo, Consolas, monospace',
         fontSize: 14,
         scrollback: 10_000,
+        cursorBlink: true,
+        allowProposedApi: true,
+      });
+      term.current.attachCustomKeyEventHandler((event) => {
+        const isCopy = (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'c';
+        if (isCopy && term.current?.hasSelection()) {
+          void navigator.clipboard.writeText(term.current.getSelection()).catch(() => {});
+          event.preventDefault();
+          return false;
+        }
+        return true;
       });
     }
 
@@ -56,9 +93,15 @@ export const TerminalPane: React.FC<TerminalPaneProps> = ({ sessionId }) => {
 
     term.current.open(terminalRef.current);
     fitAddon.current.fit();
-    void window.kleiber.terminals.resize(sessionId, term.current.cols, term.current.rows);
+    term.current.focus();
+    if (acceptsInputRef.current) {
+      void window.kleiber.terminals.resize(sessionId, term.current.cols, term.current.rows);
+    }
 
     const onDataDisposable = term.current.onData((data: string) => {
+      if (!acceptsInputRef.current) {
+        return;
+      }
       window.kleiber.sessions.send(sessionId, data).catch((sendError: unknown) => {
         setError(sendError instanceof Error ? sendError.message : 'Failed to send terminal input');
       });
@@ -67,9 +110,11 @@ export const TerminalPane: React.FC<TerminalPaneProps> = ({ sessionId }) => {
     const resizeObserver = new ResizeObserver(() => {
       if (fitAddon.current && term.current) {
         fitAddon.current.fit();
-        window.kleiber.terminals.resize(sessionId, term.current.cols, term.current.rows).catch((err: unknown) => {
-          console.error('Resize failed', err);
-        });
+        if (acceptsInputRef.current) {
+          window.kleiber.terminals.resize(sessionId, term.current.cols, term.current.rows).catch((err: unknown) => {
+            console.error('Resize failed', err);
+          });
+        }
       }
     });
     resizeObserver.observe(terminalRef.current);
@@ -92,6 +137,7 @@ export const TerminalPane: React.FC<TerminalPaneProps> = ({ sessionId }) => {
     });
 
     const removeExitListener = window.kleiber.terminals.onExit(sessionId, (exitCode: number | null) => {
+      acceptsInputRef.current = false;
       if (term.current) {
         term.current.write(`\r\n\x1b[31m[Session exited with code ${exitCode}]\x1b[0m\r\n`);
       }
@@ -126,6 +172,12 @@ export const TerminalPane: React.FC<TerminalPaneProps> = ({ sessionId }) => {
     };
   }, [sessionId]);
 
+  useEffect(() => {
+    if (term.current) {
+      term.current.options.theme = TERMINAL_THEMES[theme];
+    }
+  }, [theme]);
+
   return (
     <div
       data-testid="terminal-pane"
@@ -139,7 +191,11 @@ export const TerminalPane: React.FC<TerminalPaneProps> = ({ sessionId }) => {
         </div>
       ) : (
         <div className="flex-1 relative">
-          <div ref={terminalRef} className="absolute inset-0 p-2" />
+          <div
+            ref={terminalRef}
+            className="absolute inset-0 p-2"
+            onClick={() => term.current?.focus()}
+          />
         </div>
       )}
     </div>

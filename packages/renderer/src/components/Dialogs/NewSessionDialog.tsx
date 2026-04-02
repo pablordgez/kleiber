@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import { Session, UUID, SessionType, AgentCli } from '@kleiber/shared';
 import { X } from 'lucide-react';
-import { useAppStore } from '../../store/useAppStore';
 
 const CLIS: Array<{ value: AgentCli | 'plain'; label: string }> = [
   { value: 'plain', label: 'Plain Terminal' },
@@ -11,6 +10,7 @@ const CLIS: Array<{ value: AgentCli | 'plain'; label: string }> = [
   { value: 'opencode', label: 'OpenCode' },
   { value: 'gemini', label: 'Gemini CLI' },
 ];
+const AGENT_CLIS: AgentCli[] = ['claude', 'codex', 'opencode', 'gemini'];
 
 function formatRoleLabel(role: string): string {
   return role
@@ -29,7 +29,6 @@ export interface NewSessionDialogProps {
   onOpenChange: (open: boolean) => void;
   projectId: UUID;
   parentSessionId?: UUID;
-  projectYoloDefault: boolean;
   onCreated?: (session: Session) => void;
 }
 
@@ -38,7 +37,6 @@ export const NewSessionDialog: React.FC<NewSessionDialogProps> = ({
   onOpenChange,
   projectId,
   parentSessionId,
-  projectYoloDefault,
   onCreated,
 }) => {
   const [name, setName] = useState('');
@@ -46,63 +44,74 @@ export const NewSessionDialog: React.FC<NewSessionDialogProps> = ({
   const [role, setRole] = useState<string>('plain');
   const [roles, setRoles] = useState<string[]>([]);
   const [packInstalled, setPackInstalled] = useState(true);
+  const [detectedClis, setDetectedClis] = useState<AgentCli[]>([]);
   const [isLoadingRoles, setIsLoadingRoles] = useState(false);
-  const [yolo, setYolo] = useState(projectYoloDefault);
+  const [isLoadingClis, setIsLoadingClis] = useState(false);
+  const [yolo, setYolo] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const addSession = useAppStore((state) => state.addSession);
 
   const isPlain = cli === 'plain' && role === 'plain';
-  const yoloDisabled = !projectYoloDefault || isPlain;
+  const yoloDisabled = isPlain;
 
   const roleOptions = useMemo(
     () => [
-      { value: 'plain', label: 'Plain Terminal' },
+      { value: 'plain', label: 'No Agent' },
       ...roles.map((roleName) => ({ value: roleName, label: formatRoleLabel(roleName) })),
     ],
     [roles],
+  );
+  const cliOptions = useMemo(
+    () => CLIS.filter((entry) => entry.value === 'plain' || detectedClis.includes(entry.value)),
+    [detectedClis],
   );
 
   useEffect(() => {
     if (!open) return;
 
     let cancelled = false;
-    setYolo(projectYoloDefault);
+    setYolo(false);
     setIsLoadingRoles(true);
+    setIsLoadingClis(true);
 
-    Promise.all([window.kleiber.pack.roles(), window.kleiber.pack.status()])
-      .then(([availableRoles, status]) => {
+    Promise.all([
+      window.kleiber.pack.roles(),
+      window.kleiber.pack.status(projectId),
+      Promise.all(
+        AGENT_CLIS.map(async (cliName) => ({
+          cli: cliName,
+          detected: await window.kleiber.pack.detectCli(cliName).catch(() => false),
+        })),
+      ),
+    ])
+      .then(([availableRoles, status, cliDetections]) => {
         if (cancelled) return;
         setPackInstalled(status.installed);
         setRoles(availableRoles);
+        setDetectedClis(
+          cliDetections
+            .filter((entry) => entry.detected)
+            .map((entry) => entry.cli),
+        );
       })
       .catch((loadError) => {
         if (cancelled) return;
         setPackInstalled(false);
         setRoles([]);
+        setDetectedClis([]);
         console.error('Failed to load pack roles', loadError);
       })
       .finally(() => {
         if (!cancelled) {
           setIsLoadingRoles(false);
+          setIsLoadingClis(false);
         }
       });
 
     return () => {
       cancelled = true;
     };
-  }, [open, projectYoloDefault]);
-
-  useEffect(() => {
-    if (!projectYoloDefault) {
-      setYolo(false);
-      return;
-    }
-
-    if (open) {
-      setYolo((current) => current || projectYoloDefault);
-    }
-  }, [open, projectYoloDefault]);
+  }, [open, projectId]);
 
   useEffect(() => {
     if (role !== 'plain' && !roles.includes(role)) {
@@ -110,12 +119,20 @@ export const NewSessionDialog: React.FC<NewSessionDialogProps> = ({
     }
   }, [role, roles]);
 
+  useEffect(() => {
+    if (cli !== 'plain' && !detectedClis.includes(cli)) {
+      setCli('plain');
+      setRole('plain');
+      setYolo(false);
+    }
+  }, [cli, detectedClis]);
+
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!name.trim()) return;
 
     if (role !== 'plain' && cli === 'plain') {
-      setError('Choose an agent CLI when selecting a role.');
+      setError('Choose a harness when selecting an agent.');
       return;
     }
 
@@ -144,13 +161,12 @@ export const NewSessionDialog: React.FC<NewSessionDialogProps> = ({
       if (role !== 'plain') payload.role = role;
 
       const session = await window.kleiber.sessions.create(payload);
-      addSession(session);
       onCreated?.(session);
       onOpenChange(false);
       setName('');
       setCli('plain');
       setRole('plain');
-      setYolo(projectYoloDefault);
+      setYolo(false);
     } catch (submitError: unknown) {
       console.error('Failed to create session', submitError);
       setError(submitError instanceof Error ? submitError.message : 'Failed to create session');
@@ -178,7 +194,7 @@ export const NewSessionDialog: React.FC<NewSessionDialogProps> = ({
 
             {!packInstalled && (
               <div className="text-[#666666] text-xs bg-[#141414] border border-[#1C1C1C] p-2.5 rounded-lg">
-                Agent pack is not installed globally. Role options may be unavailable.
+                Agent pack is not installed globally. Predefined agent options may be unavailable.
               </div>
             )}
 
@@ -198,7 +214,7 @@ export const NewSessionDialog: React.FC<NewSessionDialogProps> = ({
 
             <div className="flex flex-col gap-1.5">
               <label htmlFor="cli-select" className="text-[13px] font-medium text-[#FFFFFF]">
-                CLI Tool
+                Harness
               </label>
               <select
                 id="cli-select"
@@ -206,17 +222,22 @@ export const NewSessionDialog: React.FC<NewSessionDialogProps> = ({
                 onChange={(event) => setCli(event.target.value as AgentCli | 'plain')}
                 className="flex h-9 w-full rounded-lg border border-[#1C1C1C] bg-[#000000] px-3 py-2 text-sm text-[#FFFFFF] focus:outline-none focus:border-[#333333] transition-colors"
               >
-                {CLIS.map((cliOption) => (
+                {cliOptions.map((cliOption) => (
                   <option key={cliOption.value} value={cliOption.value}>
                     {cliOption.label}
                   </option>
                 ))}
               </select>
+              {!isLoadingClis && cliOptions.length === 1 && (
+                <span className="text-xs text-[#666666]">
+                  No installed agent harnesses were detected on PATH.
+                </span>
+              )}
             </div>
 
             <div className="flex flex-col gap-1.5">
               <label htmlFor="role-select" className="text-[13px] font-medium text-[#FFFFFF]">
-                Agent Role
+                Agent
               </label>
               <select
                 id="role-select"
@@ -251,12 +272,6 @@ export const NewSessionDialog: React.FC<NewSessionDialogProps> = ({
                 Enable YOLO mode
               </label>
             </div>
-            {yoloDisabled && !projectYoloDefault && (
-              <p className="text-xs text-[#666666] -mt-2">
-                This project has YOLO disabled by default, so new sessions start with YOLO off.
-              </p>
-            )}
-
             <div className="flex justify-end gap-2 mt-3 pt-3 border-t border-[#1C1C1C]">
               <Dialog.Close asChild>
                 <button

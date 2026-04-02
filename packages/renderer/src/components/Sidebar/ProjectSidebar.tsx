@@ -139,14 +139,23 @@ export const ProjectSidebar: React.FC<ProjectSidebarProps> = ({
                 label: 'New Sub-Session',
                 onClick: () => onNewSession?.(projectId, session.id),
               },
-              {
-                label: 'Kill Session',
-                destructive: true,
-                onClick: () =>
-                  window.kleiber.sessions
-                    .kill(session.id)
-                    .catch((err: unknown) => console.error('Failed to kill session', err)),
-              },
+              ...(session.state === 'exited'
+                ? [{
+                    label: 'Delete Session',
+                    destructive: true,
+                    onClick: () =>
+                      window.kleiber.sessions
+                        .delete(session.id)
+                        .catch((err: unknown) => console.error('Failed to delete session', err)),
+                  }]
+                : [{
+                    label: 'Kill Session',
+                    destructive: true,
+                    onClick: () =>
+                      window.kleiber.sessions
+                        .kill(session.id)
+                        .catch((err: unknown) => console.error('Failed to kill session', err)),
+                  }]),
             ]}
           />
           {isExpanded && renderSessions(projectId, session.id, level + 1, navEntries)}
@@ -196,7 +205,6 @@ export const ProjectSidebar: React.FC<ProjectSidebarProps> = ({
                 isExpanded={isExpanded}
                 hasChildren={hasChildren}
                 statusState={null}
-                yolo={project.yoloDefault}
                 onToggle={() => toggleExpanded(project.id)}
                 onSelect={() => {
                   selectProject(project.id);
@@ -222,11 +230,19 @@ export const ProjectSidebar: React.FC<ProjectSidebarProps> = ({
                   {
                     label: 'Delete Project',
                     destructive: true,
-                    onClick: () =>
+                    onClick: () => {
+                      const confirmed = window.confirm(
+                        `Remove "${project.name}" from Kleiber?\n\nThis only removes the project entry from Kleiber. It does not delete any files or folders on disk.`,
+                      );
+                      if (!confirmed) {
+                        return;
+                      }
+
                       window.kleiber.projects
                         .remove(project.id)
                         .then(() => removeProject(project.id))
-                        .catch((err: unknown) => console.error('Failed to remove project', err)),
+                        .catch((err: unknown) => console.error('Failed to remove project', err));
+                    },
                   },
                 ]}
               />

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { AppSettings, Session, UUID } from '@kleiber/shared';
+import { AppSettings, Session, Theme, UUID } from '@kleiber/shared';
 import { useAppStore } from './store/useAppStore';
 import { ProjectSidebar } from './components/Sidebar/ProjectSidebar';
 import { AgentPackBanner } from './components/AgentPackBanner';
@@ -13,6 +13,12 @@ function getSessionDisplayName(session: Session): string {
   return (session as Session & { name?: string }).name ?? session.id.substring(0, 8);
 }
 
+function applyTheme(theme: Theme): void {
+  document.documentElement.dataset.theme = theme;
+  document.documentElement.classList.toggle('dark', theme === 'dark');
+  document.documentElement.style.colorScheme = theme;
+}
+
 export const App: React.FC = () => {
   const {
     projects,
@@ -22,7 +28,7 @@ export const App: React.FC = () => {
     loadProjects,
     setSessions,
     selectSession,
-    updateProject,
+    removeSession,
     updateSession,
   } = useAppStore();
 
@@ -34,8 +40,8 @@ export const App: React.FC = () => {
   const [newSessionParentId, setNewSessionParentId] = useState<UUID | null>(null);
 
   useEffect(() => {
-    document.documentElement.classList.add('dark');
-  }, []);
+    applyTheme(settings?.theme ?? 'dark');
+  }, [settings?.theme]);
 
   useEffect(() => {
     const init = async () => {
@@ -65,6 +71,15 @@ export const App: React.FC = () => {
     });
     return () => unsubscribe();
   }, [updateSession]);
+
+  useEffect(() => {
+    const unsubscribe = window.kleiber.sessions.onRemoved((sessionIds) => {
+      for (const sessionId of sessionIds) {
+        removeSession(sessionId);
+      }
+    });
+    return () => unsubscribe();
+  }, [removeSession]);
 
   useEffect(() => {
     const unsubNewProject = window.kleiber.shortcuts.onNewProject(() => {
@@ -128,15 +143,6 @@ export const App: React.FC = () => {
     setNewSessionProjectId(projectId);
     setNewSessionParentId(parentSessionId ?? null);
     setIsNewSessionOpen(true);
-  };
-
-  const handleProjectYoloChange = async (nextValue: boolean) => {
-    if (!selectedProject) {
-      return;
-    }
-
-    await window.kleiber.projects.update(selectedProject.id, { yoloDefault: nextValue });
-    updateProject({ ...selectedProject, yoloDefault: nextValue });
   };
 
   const activeProjectForDialog =
@@ -213,9 +219,16 @@ export const App: React.FC = () => {
                   .kill(selectedSession.id)
                   .catch((err: unknown) => console.error('Failed to kill session', err))
               }
+              onDelete={() =>
+                window.kleiber.sessions
+                  .delete(selectedSession.id)
+                  .catch((err: unknown) => console.error('Failed to delete session', err))
+              }
             />
             <TerminalPane
               sessionId={selectedSession.id}
+              state={selectedSession.state}
+              theme={settings?.theme ?? 'dark'}
             />
           </>
         ) : selectedProject ? (
@@ -224,12 +237,15 @@ export const App: React.FC = () => {
             sessions={sessions}
             onNewSession={() => handleNewSession(selectedProject.id)}
             onSelectSession={selectSession}
-            onProjectYoloChange={handleProjectYoloChange}
           />
         ) : null}
       </main>
 
-      <SettingsPanel open={isSettingsOpen} onOpenChange={setIsSettingsOpen} />
+      <SettingsPanel
+        open={isSettingsOpen}
+        onOpenChange={setIsSettingsOpen}
+        onSettingsChange={setSettings}
+      />
 
       {activeProjectForDialog && (
         <NewSessionDialog
@@ -243,7 +259,6 @@ export const App: React.FC = () => {
           }}
           projectId={activeProjectForDialog.id}
           {...parentSessionDialogProps}
-          projectYoloDefault={activeProjectForDialog.yoloDefault}
           onCreated={(session) => selectSession(session.id)}
         />
       )}

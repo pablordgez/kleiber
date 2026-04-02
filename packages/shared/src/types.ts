@@ -21,7 +21,7 @@ export interface Project {
   id: UUID;
   name: string;
   directoryPath: string;
-  yoloDefault: boolean;
+  yoloDefault?: boolean;
   createdAt: ISO8601String;
 }
 
@@ -36,6 +36,21 @@ export interface AppSettings {
 export interface RemoteApiCredentials {
   username: string;
   passwordHash: string;
+}
+
+export interface RemoteApiCredentialsSummary {
+  username: string;
+  hasPassword: boolean;
+}
+
+export interface RemoteApiCredentialsInput {
+  username: string;
+  password: string;
+}
+
+export interface RemoteApiSessionOptions {
+  availableHarnesses: AgentCli[];
+  availableAgents: string[];
 }
 
 export interface Session {

@@ -182,10 +182,13 @@ export async function registerTerminalWebSocketRoutes(
           return;
         }
 
-        const bufferedOutput = options.sessionManager.readSession(sessionId, {
-          plainText: false,
-        });
-        if (bufferedOutput.length > 0) {
+        const shouldSendSnapshot = session.type === "plain";
+        const bufferedOutput = shouldSendSnapshot
+          ? options.sessionManager.readSession(sessionId, {
+              plainText: false,
+            })
+          : [];
+        if (shouldSendSnapshot && bufferedOutput.length > 0) {
           sendJson(socket, {
             type: "snapshot",
             sessionId,

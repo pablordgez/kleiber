@@ -15,7 +15,13 @@ export default defineConfig({
       outDir: "dist/main",
       emptyOutDir: true,
       rollupOptions: {
-        input: path.resolve(__dirname, "packages/main/src/index.ts"),
+        input: {
+          index: path.resolve(__dirname, "packages/main/src/index.ts"),
+          "mcp/stdio-wrapper": path.resolve(
+            __dirname,
+            "packages/main/src/mcp/stdio-wrapper-entry.ts",
+          ),
+        },
         // `ws` probes these native addons behind try/catch; they should stay optional.
         external: ["bufferutil", "utf-8-validate"],
       },

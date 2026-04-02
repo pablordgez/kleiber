@@ -3,22 +3,42 @@ import { Terminal } from "xterm";
 import { FitAddon } from "xterm-addon-fit";
 import "xterm/css/xterm.css";
 import { ApiClient } from "../api/api";
-import { Maximize2, Trash2 } from "lucide-react";
+import { Copy, Trash2 } from "lucide-react";
 
 interface TerminalViewProps {
   projectId: string;
   sessionId: string;
   sessionName: string;
+  onKilled?: () => void;
 }
 
-export const TerminalView: React.FC<TerminalViewProps> = ({ projectId, sessionId, sessionName }) => {
+export const TerminalView: React.FC<TerminalViewProps> = ({
+  projectId,
+  sessionId,
+  sessionName,
+  onKilled,
+}) => {
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const outputWsRef = useRef<WebSocket | null>(null);
   const inputWsRef = useRef<WebSocket | null>(null);
+  const resizeObserverRef = useRef<ResizeObserver | null>(null);
+  const lastSizeRef = useRef<{ cols: number; rows: number } | null>(null);
   const [error, setError] = useState("");
   const [status, setStatus] = useState<"connecting" | "connected" | "disconnected">("connecting");
+
+  const copySelection = async () => {
+    const selection = xtermRef.current?.getSelection() ?? "";
+    if (!selection) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(selection);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to copy terminal selection");
+    }
+  };
 
   useEffect(() => {
     if (!terminalRef.current) return;
@@ -33,30 +53,61 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ projectId, sessionId
       },
       fontFamily: "JetBrains Mono, Fira Code, Menlo, Consolas, monospace",
       fontSize: 14,
+      scrollback: 10_000,
       cursorBlink: true,
       allowProposedApi: true,
+    });
+    term.attachCustomKeyEventHandler((event) => {
+      const isCopy = (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "c";
+      if (isCopy && term.hasSelection()) {
+        void navigator.clipboard.writeText(term.getSelection()).catch(() => {});
+        event.preventDefault();
+        return false;
+      }
+      return true;
     });
 
     const fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
     term.open(terminalRef.current);
     fitAddon.fit();
+    term.focus();
 
     xtermRef.current = term;
     fitAddonRef.current = fitAddon;
 
-    const handleResize = () => fitAddon.fit();
+    const syncResize = () => {
+      fitAddon.fit();
+      const nextSize = { cols: term.cols, rows: term.rows };
+      if (
+        lastSizeRef.current?.cols === nextSize.cols &&
+        lastSizeRef.current?.rows === nextSize.rows
+      ) {
+        return;
+      }
+      lastSizeRef.current = nextSize;
+      void ApiClient.resizeSession(projectId, sessionId, nextSize.cols, nextSize.rows).catch(() => {});
+    };
+    resizeObserverRef.current = new ResizeObserver(syncResize);
+    resizeObserverRef.current.observe(terminalRef.current);
+
+    const handleResize = () => syncResize();
     window.addEventListener("resize", handleResize);
 
     return () => {
       window.removeEventListener("resize", handleResize);
+      resizeObserverRef.current?.disconnect();
+      resizeObserverRef.current = null;
+      lastSizeRef.current = null;
       term.dispose();
     };
-  }, []);
+  }, [projectId, sessionId]);
 
   useEffect(() => {
     if (!xtermRef.current) return;
     const term = xtermRef.current;
+    lastSizeRef.current = null;
+    term.reset();
     term.clear();
     setError("");
     setStatus("connecting");
@@ -90,10 +141,21 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ projectId, sessionId
           const msg = JSON.parse(event.data);
           if (msg.type === "ready") {
             setStatus("connected");
+            if (fitAddonRef.current && xtermRef.current) {
+              fitAddonRef.current.fit();
+              const nextSize = { cols: xtermRef.current.cols, rows: xtermRef.current.rows };
+              if (
+                lastSizeRef.current?.cols !== nextSize.cols ||
+                lastSizeRef.current?.rows !== nextSize.rows
+              ) {
+                lastSizeRef.current = nextSize;
+                void ApiClient.resizeSession(projectId, sessionId, nextSize.cols, nextSize.rows).catch(() => {});
+              }
+            }
           } else if (msg.type === "snapshot" && msg.output) {
-            term.write(msg.output.replace(/\n/g, "\r\n"));
-          } else if (msg.type === "output" && msg.chunk) {
-            term.write(msg.chunk);
+            term.write(msg.output);
+          } else if (msg.type === "output" && typeof (msg.data ?? msg.chunk) === "string") {
+            term.write((msg.data ?? msg.chunk) as string);
           } else if (msg.type === "exit") {
             term.write(`\r\n\x1b[33m[Session exited with code ${msg.exitCode}]\x1b[0m\r\n`);
           }
@@ -153,11 +215,12 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ projectId, sessionId
       outputWsRef.current = null;
       inputWsRef.current = null;
     };
-  }, [sessionId]);
+  }, [projectId, sessionId]);
 
   const handleKill = async () => {
     try {
       await ApiClient.killSession(projectId, sessionId);
+      onKilled?.();
     } catch (err: any) {
       setError(err.message || "Failed to kill session");
     }
@@ -173,6 +236,15 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ projectId, sessionId
           </span>
         </div>
         <div className="flex items-center gap-1">
+          <button
+            onClick={() => {
+              void copySelection();
+            }}
+            className="text-xs text-[#666666] hover:text-[#FFFFFF] hover:bg-[#141414] px-2 py-1 rounded-lg transition-colors flex items-center gap-1"
+          >
+            <Copy size={13} />
+            Copy
+          </button>
           <button
             onClick={() => {
               xtermRef.current?.clear();
@@ -194,7 +266,11 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ projectId, sessionId
       {error && <div className="bg-[#EF4444]/10 text-[#EF4444] px-4 py-2 text-xs font-mono border-b border-[#1C1C1C]">{error}</div>}
       
       <div className="flex-1 relative">
-        <div ref={terminalRef} className="absolute inset-0 p-2" />
+        <div
+          ref={terminalRef}
+          className="absolute inset-0 overflow-hidden"
+          onClick={() => xtermRef.current?.focus()}
+        />
       </div>
     </div>
   );

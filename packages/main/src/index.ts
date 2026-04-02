@@ -1,7 +1,8 @@
 import path from "node:path";
-import { app, BrowserWindow, session as electronSession } from "electron";
+import { app, BrowserWindow, Menu, session as electronSession } from "electron";
 import { configureMainLogging, startSecurityEventLogging } from "./logging";
 import { registerIpcHandlers } from "./ipc/handlers";
+import { IPC_CHANNELS } from "@kleiber/shared";
 
 configureMainLogging(process.env.NODE_ENV === "development");
 
@@ -66,8 +67,56 @@ function createWindow(): void {
   void window.loadFile(path.join(__dirname, "../renderer/index.html"));
 }
 
+function buildAppMenu(): void {
+  const sendToFocused = (channel: string) => {
+    BrowserWindow.getFocusedWindow()?.webContents.send(channel);
+  };
+
+  const isMac = process.platform === "darwin";
+  const menu = Menu.buildFromTemplate([
+    ...(isMac ? [{ role: "appMenu" as const }] : []),
+    {
+      label: "File",
+      submenu: [
+        {
+          label: "New Project",
+          accelerator: "CmdOrCtrl+N",
+          click: () => sendToFocused(IPC_CHANNELS.shortcuts.newProject),
+        },
+        {
+          label: "New Session",
+          accelerator: "CmdOrCtrl+T",
+          click: () => sendToFocused(IPC_CHANNELS.shortcuts.newSession),
+        },
+        {
+          label: "New Sub-Session",
+          accelerator: "CmdOrCtrl+Shift+T",
+          click: () => sendToFocused(IPC_CHANNELS.shortcuts.newSubSession),
+        },
+        {
+          label: "Kill Session",
+          accelerator: "CmdOrCtrl+W",
+          click: () => sendToFocused(IPC_CHANNELS.shortcuts.killSession),
+        },
+        { type: "separator" as const },
+        {
+          label: "Settings",
+          accelerator: "CmdOrCtrl+,",
+          click: () => sendToFocused(IPC_CHANNELS.shortcuts.openSettings),
+        },
+      ],
+    },
+    { role: "editMenu" as const },
+    { role: "viewMenu" as const },
+    { role: "windowMenu" as const },
+  ]);
+
+  Menu.setApplicationMenu(menu);
+}
+
 app.whenReady().then(() => {
   registerIpcHandlers();
+  buildAppMenu();
 
   // Set Content-Security-Policy on all responses
   electronSession.defaultSession.webRequest.onHeadersReceived((details, callback) => {

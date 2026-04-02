@@ -14,12 +14,14 @@ export interface ProjectSidebarProps {
   remoteApiEnabled: boolean;
   remoteApiPort: number | null;
   onNewSession?: (projectId: UUID, parentSessionId?: UUID) => void;
+  onOpenSettings?: () => void;
 }
 
 export const ProjectSidebar: React.FC<ProjectSidebarProps> = ({
   remoteApiEnabled,
   remoteApiPort,
   onNewSession,
+  onOpenSettings,
 }) => {
   const {
     projects,
@@ -153,7 +155,10 @@ export const ProjectSidebar: React.FC<ProjectSidebarProps> = ({
 
       {/* Footer */}
       <div className="px-3 py-3 flex flex-col gap-2">
-        <button className="flex items-center gap-2 text-sm text-[#666666] hover:text-[#FFFFFF] transition-colors">
+        <button
+          onClick={onOpenSettings}
+          className="flex items-center gap-2 text-sm text-[#666666] hover:text-[#FFFFFF] transition-colors"
+        >
           <Settings size={15} />
           Settings
         </button>

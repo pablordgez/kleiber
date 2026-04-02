@@ -55,6 +55,33 @@ const api = {
     install: (): Promise<void> => ipcRenderer.invoke("pack:install"),
     roles: (): Promise<string[]> => ipcRenderer.invoke("pack:roles"),
   },
+  shortcuts: {
+    onNewProject: (callback: () => void): (() => void) => {
+      const listener = () => callback();
+      ipcRenderer.on("shortcut:new-project", listener);
+      return () => { ipcRenderer.removeListener("shortcut:new-project", listener); };
+    },
+    onNewSession: (callback: () => void): (() => void) => {
+      const listener = () => callback();
+      ipcRenderer.on("shortcut:new-session", listener);
+      return () => { ipcRenderer.removeListener("shortcut:new-session", listener); };
+    },
+    onNewSubSession: (callback: () => void): (() => void) => {
+      const listener = () => callback();
+      ipcRenderer.on("shortcut:new-sub-session", listener);
+      return () => { ipcRenderer.removeListener("shortcut:new-sub-session", listener); };
+    },
+    onKillSession: (callback: () => void): (() => void) => {
+      const listener = () => callback();
+      ipcRenderer.on("shortcut:kill-session", listener);
+      return () => { ipcRenderer.removeListener("shortcut:kill-session", listener); };
+    },
+    onOpenSettings: (callback: () => void): (() => void) => {
+      const listener = () => callback();
+      ipcRenderer.on("shortcut:open-settings", listener);
+      return () => { ipcRenderer.removeListener("shortcut:open-settings", listener); };
+    },
+  },
   terminals: {
     resize: (sessionId: UUID, cols: number, rows: number): Promise<void> =>
       ipcRenderer.invoke("terminals:resize", sessionId, cols, rows),

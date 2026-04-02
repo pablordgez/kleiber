@@ -4,19 +4,56 @@
 @config "../tailwind.config.ts";
 
 @layer base {
-  * {
-    border-color: #1C1C1C;
+  :root {
+    --app-bg: #000000;
+    --app-surface: #0A0A0A;
+    --app-surface-raised: #141414;
+    --app-surface-hover: #111111;
+    --app-border: #1C1C1C;
+    --app-border-strong: #333333;
+    --app-ring: #444444;
+    --app-text: #FFFFFF;
+    --app-text-muted: #666666;
+    --app-text-subtle: #888888;
+    --app-text-faint: #AAAAAA;
+    --app-placeholder: #444444;
+    --app-accent-bg: #FFFFFF;
+    --app-accent-hover: #E5E5E5;
+    --app-accent-text: #000000;
   }
 
   html {
     color-scheme: dark;
   }
 
+  html[data-theme='light'] {
+    color-scheme: light;
+    --app-bg: #F6F2EA;
+    --app-surface: #FFFCF5;
+    --app-surface-raised: #ECE5D9;
+    --app-surface-hover: #E4DAC9;
+    --app-border: #D5CCBE;
+    --app-border-strong: #B8AD9C;
+    --app-ring: #A29786;
+    --app-text: #181512;
+    --app-text-muted: #6D655C;
+    --app-text-subtle: #8A8073;
+    --app-text-faint: #968B7F;
+    --app-placeholder: #A1968A;
+    --app-accent-bg: #181512;
+    --app-accent-hover: #2A241F;
+    --app-accent-text: #FFFCF5;
+  }
+
+  * {
+    border-color: var(--app-border);
+  }
+
   body {
     margin: 0;
     min-height: 100vh;
-    background: #000000;
-    color: #FFFFFF;
+    background: var(--app-bg);
+    color: var(--app-text);
     font-family: Inter, -apple-system, BlinkMacSystemFont, sans-serif;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
@@ -32,11 +69,92 @@
   }
 
   ::-webkit-scrollbar-thumb {
-    background: #1C1C1C;
+    background: var(--app-border);
     border-radius: 3px;
   }
 
   ::-webkit-scrollbar-thumb:hover {
-    background: #333333;
+    background: var(--app-border-strong);
+  }
+
+  html[data-theme='light'] .bg-\[\#000000\],
+  html[data-theme='light'] .bg-\[\#111111\] {
+    background-color: var(--app-bg) !important;
+  }
+
+  html[data-theme='light'] .bg-\[\#0A0A0A\] {
+    background-color: var(--app-surface) !important;
+  }
+
+  html[data-theme='light'] .bg-\[\#141414\],
+  html[data-theme='light'] .hover\:bg-\[\#141414\]:hover,
+  html[data-theme='light'] .focus\:bg-\[\#141414\]:focus {
+    background-color: var(--app-surface-raised) !important;
+  }
+
+  html[data-theme='light'] .hover\:bg-\[\#0A0A0A\]:hover,
+  html[data-theme='light'] .hover\:bg-\[\#111111\]:hover {
+    background-color: var(--app-surface-hover) !important;
+  }
+
+  html[data-theme='light'] .bg-\[\#FFFFFF\] {
+    background-color: var(--app-accent-bg) !important;
+  }
+
+  html[data-theme='light'] .hover\:bg-\[\#E5E5E5\]:hover {
+    background-color: var(--app-accent-hover) !important;
+  }
+
+  html[data-theme='light'] .text-\[\#FFFFFF\],
+  html[data-theme='light'] .hover\:text-\[\#FFFFFF\]:hover {
+    color: var(--app-text) !important;
+  }
+
+  html[data-theme='light'] .text-\[\#999999\],
+  html[data-theme='light'] .text-\[\#888888\],
+  html[data-theme='light'] .text-\[\#666666\],
+  html[data-theme='light'] .text-\[\#333333\] {
+    color: var(--app-text-muted) !important;
+  }
+
+  html[data-theme='light'] .text-\[\#AAAAAA\] {
+    color: var(--app-text-faint) !important;
+  }
+
+  html[data-theme='light'] .text-\[\#000000\] {
+    color: var(--app-accent-text) !important;
+  }
+
+  html[data-theme='light'] .border-\[\#1C1C1C\],
+  html[data-theme='light'] .border-l.border-dashed.border-\[\#1C1C1C\],
+  html[data-theme='light'] .border-r.border-\[\#1C1C1C\],
+  html[data-theme='light'] .border-b.border-\[\#1C1C1C\],
+  html[data-theme='light'] .border-t.border-\[\#1C1C1C\] {
+    border-color: var(--app-border) !important;
+  }
+
+  html[data-theme='light'] .divide-\[\#1C1C1C\] > :not([hidden]) ~ :not([hidden]) {
+    border-color: var(--app-border) !important;
+  }
+
+  html[data-theme='light'] .border-\[\#FFFFFF\] {
+    border-color: var(--app-accent-bg) !important;
+  }
+
+  html[data-theme='light'] .hover\:border-\[\#333333\]:hover,
+  html[data-theme='light'] .focus\:border-\[\#333333\]:focus {
+    border-color: var(--app-border-strong) !important;
+  }
+
+  html[data-theme='light'] .ring-\[\#444444\] {
+    --tw-ring-color: var(--app-ring) !important;
+  }
+
+  html[data-theme='light'] .placeholder\:text-\[\#444444\]::placeholder {
+    color: var(--app-placeholder) !important;
+  }
+
+  html[data-theme='light'] .accent-white {
+    accent-color: var(--app-accent-bg);
   }
 }

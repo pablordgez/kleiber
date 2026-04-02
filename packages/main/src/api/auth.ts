@@ -43,6 +43,10 @@ export function createSigningKey(): Buffer {
   return randomBytes(32);
 }
 
+export async function hashPassword(password: string): Promise<string> {
+  return bcrypt.hash(password, 12);
+}
+
 export function issueAuthToken(
   username: string,
   signingKey: Buffer,

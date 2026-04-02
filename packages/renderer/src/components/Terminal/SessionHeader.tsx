@@ -13,6 +13,7 @@ export interface SessionHeaderProps {
   projectName: string;
   ancestorNames: string[];
   onKill: () => void;
+  onDelete: () => void;
 }
 
 export const SessionHeader: React.FC<SessionHeaderProps> = ({
@@ -20,6 +21,7 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
   projectName,
   ancestorNames,
   onKill,
+  onDelete,
 }) => {
   const sessionName = getSessionDisplayName(session);
   const breadcrumbs = [projectName, ...ancestorNames, sessionName];
@@ -54,39 +56,75 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
 
       {/* Right: kill + more */}
       <div className="flex items-center gap-1 shrink-0">
-        <Popover.Root>
-          <Popover.Trigger asChild>
-            <button className="text-xs text-[#EF4444] hover:bg-[#EF4444]/10 px-2 py-1 rounded-lg transition-colors flex items-center gap-1">
-              <X size={13} />
-              Kill
-            </button>
-          </Popover.Trigger>
-          <Popover.Portal>
-            <Popover.Content
-              className="bg-[#0A0A0A] border border-[#1C1C1C] rounded-lg p-4 z-50 w-60 shadow-xl shadow-black/50"
-              sideOffset={4}
-            >
-              <p className="text-sm text-[#FFFFFF] mb-4">
-                Kill this session?
-              </p>
-              <div className="flex justify-end gap-2">
-                <Popover.Close asChild>
-                  <button className="px-3 py-1.5 text-xs text-[#666666] hover:bg-[#141414] rounded-lg transition-colors">
-                    Cancel
-                  </button>
-                </Popover.Close>
-                <Popover.Close asChild>
-                  <button
-                    onClick={onKill}
-                    className="px-3 py-1.5 text-xs bg-[#EF4444] text-white hover:bg-[#DC2626] rounded-lg transition-colors"
-                  >
-                    Kill Session
-                  </button>
-                </Popover.Close>
-              </div>
-            </Popover.Content>
-          </Popover.Portal>
-        </Popover.Root>
+        {session.state === 'exited' ? (
+          <Popover.Root>
+            <Popover.Trigger asChild>
+              <button className="text-xs text-[#EF4444] hover:bg-[#EF4444]/10 px-2 py-1 rounded-lg transition-colors flex items-center gap-1">
+                <X size={13} />
+                Delete
+              </button>
+            </Popover.Trigger>
+            <Popover.Portal>
+              <Popover.Content
+                className="bg-[#0A0A0A] border border-[#1C1C1C] rounded-lg p-4 z-50 w-60 shadow-xl shadow-black/50"
+                sideOffset={4}
+              >
+                <p className="text-sm text-[#FFFFFF] mb-4">
+                  Delete this stopped session from Kleiber?
+                </p>
+                <div className="flex justify-end gap-2">
+                  <Popover.Close asChild>
+                    <button className="px-3 py-1.5 text-xs text-[#666666] hover:bg-[#141414] rounded-lg transition-colors">
+                      Cancel
+                    </button>
+                  </Popover.Close>
+                  <Popover.Close asChild>
+                    <button
+                      onClick={onDelete}
+                      className="px-3 py-1.5 text-xs bg-[#EF4444] text-white hover:bg-[#DC2626] rounded-lg transition-colors"
+                    >
+                      Delete Session
+                    </button>
+                  </Popover.Close>
+                </div>
+              </Popover.Content>
+            </Popover.Portal>
+          </Popover.Root>
+        ) : (
+          <Popover.Root>
+            <Popover.Trigger asChild>
+              <button className="text-xs text-[#EF4444] hover:bg-[#EF4444]/10 px-2 py-1 rounded-lg transition-colors flex items-center gap-1">
+                <X size={13} />
+                Kill
+              </button>
+            </Popover.Trigger>
+            <Popover.Portal>
+              <Popover.Content
+                className="bg-[#0A0A0A] border border-[#1C1C1C] rounded-lg p-4 z-50 w-60 shadow-xl shadow-black/50"
+                sideOffset={4}
+              >
+                <p className="text-sm text-[#FFFFFF] mb-4">
+                  Kill this session?
+                </p>
+                <div className="flex justify-end gap-2">
+                  <Popover.Close asChild>
+                    <button className="px-3 py-1.5 text-xs text-[#666666] hover:bg-[#141414] rounded-lg transition-colors">
+                      Cancel
+                    </button>
+                  </Popover.Close>
+                  <Popover.Close asChild>
+                    <button
+                      onClick={onKill}
+                      className="px-3 py-1.5 text-xs bg-[#EF4444] text-white hover:bg-[#DC2626] rounded-lg transition-colors"
+                    >
+                      Kill Session
+                    </button>
+                  </Popover.Close>
+                </div>
+              </Popover.Content>
+            </Popover.Portal>
+          </Popover.Root>
+        )}
 
         <DropdownMenu.Root>
           <DropdownMenu.Trigger asChild>

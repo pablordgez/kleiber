@@ -33,6 +33,15 @@ function encodeFrame(payload: unknown): string {
   return `Content-Length: ${Buffer.byteLength(body, "utf8")}\r\n\r\n${body}`;
 }
 
+function encodeLfFrame(payload: unknown): string {
+  const body = JSON.stringify(payload);
+  return `Content-Length: ${Buffer.byteLength(body, "utf8")}\n\n${body}`;
+}
+
+function encodeJsonLine(payload: unknown): string {
+  return `${JSON.stringify(payload)}\n`;
+}
+
 function extractFrames(output: string): unknown[] {
   const frames: unknown[] = [];
   let remaining = output;
@@ -49,6 +58,14 @@ function extractFrames(output: string): unknown[] {
     remaining = remaining.slice(end);
   }
   return frames;
+}
+
+function extractJsonLines(output: string): unknown[] {
+  return output
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => JSON.parse(line));
 }
 
 class ParentBridgeFake {
@@ -162,6 +179,152 @@ describe("McpStdioWrapper", () => {
     ]);
     expect(frames[1]?.result.version).toBe("1.2.3");
     expect(frames[1]?.result.capabilities).toEqual({ tools: { listChanged: true } });
+
+    wrapper.stop();
+  });
+
+  it("accepts LF-only MCP frame separators", async () => {
+    const input = new PassThrough();
+    const output = new PassThrough();
+    const bridge = new ParentBridgeFake();
+    let outputData = "";
+    output.on("data", (chunk) => {
+      outputData += String(chunk);
+    });
+
+    const wrapper = new McpStdioWrapper({
+      streams: { input, output },
+      bridge,
+      context: { sessionId: "session-lf", projectId: "project-lf" },
+    });
+    wrapper.start();
+
+    input.write(encodeLfFrame({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }));
+    await vi.waitFor(() => {
+      expect(bridge.sent).toHaveLength(1);
+    });
+
+    bridge.respond({
+      kind: "kleiber.mcp.response",
+      requestId: bridge.sent[0]?.requestId ?? "",
+      ok: true,
+      result: {
+        protocolVersion: "2025-03-26",
+        capabilities: { tools: { listChanged: false } },
+        serverInfo: { name: "kleiber-orchestrator", version: "1.0.0" },
+        version: "1.0.0",
+      },
+    });
+
+    await vi.waitFor(() => {
+      const frames = extractFrames(outputData);
+      expect(frames).toHaveLength(1);
+    });
+
+    wrapper.stop();
+  });
+
+  it("accepts newline-delimited JSON-RPC messages", async () => {
+    const input = new PassThrough();
+    const output = new PassThrough();
+    const bridge = new ParentBridgeFake();
+    let outputData = "";
+    output.on("data", (chunk) => {
+      outputData += String(chunk);
+    });
+
+    const wrapper = new McpStdioWrapper({
+      streams: { input, output },
+      bridge,
+      context: { sessionId: "session-jsonl", projectId: "project-jsonl" },
+    });
+    wrapper.start();
+
+    input.write(encodeJsonLine({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }));
+    await vi.waitFor(() => {
+      expect(bridge.sent).toHaveLength(1);
+    });
+
+    bridge.respond({
+      kind: "kleiber.mcp.response",
+      requestId: bridge.sent[0]?.requestId ?? "",
+      ok: true,
+      result: {
+        protocolVersion: "2025-03-26",
+        capabilities: { tools: { listChanged: false } },
+        serverInfo: { name: "kleiber-orchestrator", version: "1.0.0" },
+        version: "1.0.0",
+      },
+    });
+
+    await vi.waitFor(() => {
+      const frames = extractJsonLines(outputData);
+      expect(frames).toHaveLength(1);
+    });
+
+    const frames = extractJsonLines(outputData) as any[];
+    expect(frames[0]?.result.serverInfo.version).toBe("1.0.0");
+
+    wrapper.stop();
+  });
+
+  it("normalizes raw tools/call payloads into MCP CallToolResult envelopes", async () => {
+    const input = new PassThrough();
+    const output = new PassThrough();
+    const bridge = new ParentBridgeFake();
+    let outputData = "";
+    output.on("data", (chunk) => {
+      outputData += String(chunk);
+    });
+
+    const wrapper = new McpStdioWrapper({
+      streams: { input, output },
+      bridge,
+      context: { sessionId: "session-tools", projectId: "project-tools" },
+    });
+    wrapper.start();
+
+    input.write(
+      encodeJsonLine({
+        jsonrpc: "2.0",
+        id: 7,
+        method: "tools/call",
+        params: {
+          name: "spawn_session",
+          arguments: {
+            project_id: "project-tools",
+            cli: "claude",
+          },
+        },
+      }),
+    );
+
+    await vi.waitFor(() => {
+      expect(bridge.sent).toHaveLength(1);
+    });
+
+    bridge.respond({
+      kind: "kleiber.mcp.response",
+      requestId: bridge.sent[0]?.requestId ?? "",
+      ok: true,
+      result: {
+        session_id: "child-1",
+        name: "Child Session",
+        yolo: false,
+      },
+    });
+
+    await vi.waitFor(() => {
+      const frames = extractJsonLines(outputData) as any[];
+      expect(frames).toHaveLength(1);
+      expect(frames[0]?.result.content).toEqual([{ type: "text", text: "Session created." }]);
+      expect(frames[0]?.result.structuredContent).toEqual({
+        session_id: "child-1",
+        name: "Child Session",
+        yolo: false,
+      });
+      expect(frames[0]?.result.isError).toBe(false);
+    });
 
     wrapper.stop();
   });

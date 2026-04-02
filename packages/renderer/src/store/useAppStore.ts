@@ -33,6 +33,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   setSessions: (sessions) => set({ sessions }),
   selectProject: (id) => set({ selectedProjectId: id, selectedSessionId: null }),
   selectSession: (id) => {
+    if (id === null) {
+      set((state) => ({ selectedSessionId: null, selectedProjectId: state.selectedProjectId }));
+      return;
+    }
     const session = get().sessions.find((s) => s.id === id);
     set({ selectedSessionId: id, selectedProjectId: session ? session.projectId : null });
   },
@@ -55,12 +59,28 @@ export const useAppStore = create<AppState>((set, get) => ({
       projects: state.projects.map((p) => (p.id === project.id ? project : p)),
     })),
   addSession: (session) =>
-    set((state) => ({ sessions: [...state.sessions, session] })),
+    set((state) => {
+      const existing = state.sessions.find((candidate) => candidate.id === session.id);
+      if (existing) {
+        return {
+          sessions: state.sessions.map((candidate) =>
+            candidate.id === session.id ? session : candidate,
+          ),
+        };
+      }
+
+      return { sessions: [...state.sessions, session] };
+    }),
   removeSession: (id) =>
-    set((state) => ({
-      sessions: state.sessions.filter((s) => s.id !== id),
-      selectedSessionId: state.selectedSessionId === id ? null : state.selectedSessionId,
-    })),
+    set((state) => {
+      const expandedIds = new Set(state.expandedIds);
+      expandedIds.delete(id);
+      return {
+        sessions: state.sessions.filter((s) => s.id !== id),
+        selectedSessionId: state.selectedSessionId === id ? null : state.selectedSessionId,
+        expandedIds,
+      };
+    }),
   updateSession: (session) =>
     set((state) => {
       const existing = state.sessions.find((candidate) => candidate.id === session.id);

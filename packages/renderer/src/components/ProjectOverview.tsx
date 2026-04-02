@@ -1,7 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import { Project, Session, UUID } from '@kleiber/shared';
 import { Terminal, Play, XCircle, AlertCircle, Circle } from 'lucide-react';
-import { cn } from '../lib/utils';
 
 function getSessionDisplayName(session: Session): string {
   return (session as Session & { name?: string }).name ?? session.id.substring(0, 8);
@@ -12,7 +11,6 @@ export interface ProjectOverviewProps {
   sessions: Session[];
   onNewSession: () => void;
   onSelectSession: (id: UUID) => void;
-  onProjectYoloChange: (nextValue: boolean) => Promise<void>;
 }
 
 const getStatusIcon = (state: string): React.ReactNode => {
@@ -33,31 +31,9 @@ export const ProjectOverview: React.FC<ProjectOverviewProps> = ({
   sessions,
   onNewSession,
   onSelectSession,
-  onProjectYoloChange,
 }) => {
   const projectSessions = sessions.filter((s) => s.projectId === project.id);
   const runningSessions = projectSessions.filter((s) => s.state === 'running');
-  const [isUpdatingYolo, setIsUpdatingYolo] = useState(false);
-  const [yoloError, setYoloError] = useState<string | null>(null);
-
-  useEffect(() => {
-    setYoloError(null);
-    setIsUpdatingYolo(false);
-  }, [project.id, project.yoloDefault]);
-
-  const handleProjectYoloToggle = async () => {
-    setIsUpdatingYolo(true);
-    setYoloError(null);
-
-    try {
-      await onProjectYoloChange(!project.yoloDefault);
-    } catch (error) {
-      console.error('Failed to update project YOLO default', error);
-      setYoloError(error instanceof Error ? error.message : 'Failed to update project YOLO default');
-    } finally {
-      setIsUpdatingYolo(false);
-    }
-  };
 
   return (
     <div className="flex-1 overflow-y-auto bg-[#000000] text-[#FFFFFF] p-10">
@@ -67,7 +43,7 @@ export const ProjectOverview: React.FC<ProjectOverviewProps> = ({
           <p className="text-[#666666] font-mono text-xs">{project.directoryPath}</p>
         </div>
 
-        <div className="grid grid-cols-3 gap-3 mb-8">
+        <div className="grid grid-cols-2 gap-3 mb-8">
           <div className="rounded-lg bg-[#0A0A0A] p-4">
             <div className="text-[#666666] text-xs mb-2">Sessions</div>
             <div className="text-xl font-semibold">{projectSessions.length}</div>
@@ -75,37 +51,6 @@ export const ProjectOverview: React.FC<ProjectOverviewProps> = ({
           <div className="rounded-lg bg-[#0A0A0A] p-4">
             <div className="text-[#666666] text-xs mb-2">Running</div>
             <div className="text-xl font-semibold text-[#22C55E]">{runningSessions.length}</div>
-          </div>
-          <div className="rounded-lg bg-[#0A0A0A] p-4">
-            <div className="text-[#666666] text-xs mb-2">YOLO Default</div>
-            <div className="flex items-center justify-between gap-2">
-              <span
-                className={cn(
-                  'text-xl font-semibold',
-                  project.yoloDefault ? 'text-[#F97316]' : 'text-[#666666]',
-                )}
-              >
-                {project.yoloDefault ? 'On' : 'Off'}
-              </span>
-              <button
-                type="button"
-                onClick={() => void handleProjectYoloToggle()}
-                disabled={isUpdatingYolo}
-                className={cn(
-                  'rounded-lg px-2.5 py-1 text-xs font-medium transition-colors',
-                  project.yoloDefault
-                    ? 'text-[#F97316] hover:bg-[#F97316]/10'
-                    : 'text-[#666666] hover:bg-[#141414]',
-                  isUpdatingYolo && 'cursor-not-allowed opacity-50',
-                )}
-              >
-                {isUpdatingYolo ? 'Saving…' : project.yoloDefault ? 'Disable' : 'Enable'}
-              </button>
-            </div>
-            <div className="mt-1.5 text-[11px] text-[#666666] leading-tight">
-              New sessions inherit this default.
-            </div>
-            {yoloError && <div className="mt-2 text-xs text-[#EF4444]">{yoloError}</div>}
           </div>
         </div>
 

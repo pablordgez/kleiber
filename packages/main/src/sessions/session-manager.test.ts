@@ -1,3 +1,7 @@
+import { readFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -181,6 +185,30 @@ it("killSession cascades through descendants", async () => {
   ).toEqual([1, 1, 1]);
 });
 
+it("deleteSession removes an exited subtree and rejects live sessions", async () => {
+  const fakeFactory = new FakePtyFactory();
+  const manager = createManager(fakeFactory.factory);
+
+  const parent = await manager.createSession({
+    projectId: "project-1",
+    workingDirectory: "/tmp",
+  });
+  const child = await manager.createSession({
+    projectId: "project-1",
+    parentSessionId: parent.id,
+    workingDirectory: "/tmp",
+  });
+
+  expect(() => manager.deleteSession(parent.id)).toThrow(/must be exited/i);
+
+  manager.killSession(parent.id);
+  const deletedIds = manager.deleteSession(parent.id);
+
+  expect(new Set(deletedIds)).toEqual(new Set([parent.id, child.id]));
+  expect(manager.getSession(parent.id)).toBeUndefined();
+  expect(manager.getSession(child.id)).toBeUndefined();
+});
+
 it("readSession returns the newest lines and truncates oversized lines", async () => {
   const fakeFactory = new FakePtyFactory();
   const manager = createManager(fakeFactory.factory, 3);
@@ -344,6 +372,52 @@ it("injects MCP launch config into the spawned process environment and argv", as
     MCP_PROJECT: "project-1",
     MCP_WRAPPER: "/usr/bin/node",
     MCP_ARGS: JSON.stringify(["/tmp/wrapper.js", "--stdio"]),
+  });
+});
+
+it("writes session-local MCP config files when requested by the harness adapter", async () => {
+  const fakeFactory = new FakePtyFactory();
+  const manager = new SessionManager({
+    ptyFactory: fakeFactory.factory,
+  });
+
+  const session = await manager.createSession({
+    projectId: "project-1",
+    type: "agent",
+    cli: "gemini",
+    workingDirectory: "/tmp/project-1",
+    mcpEnabled: true,
+    mcpLaunchConfig: {
+      injectionMethod: "env",
+      wrapperCommand: "/usr/bin/node",
+      wrapperArgs: ["/tmp/wrapper.js"],
+      envTemplate: {
+        GEMINI_CLI_SYSTEM_SETTINGS_PATH: "{mcpConfigPath}",
+      },
+      configFileName: "gemini-settings.json",
+      configContentTemplate:
+        '{"mcpServers":{"kleiber":{"command":{wrapperCommandJson},"args":{wrapperArgsJson},"env":{"KLEIBER_SESSION_ID":"{sessionId}"}}}}',
+    },
+    launch: {
+      command: "gemini",
+      args: [],
+      env: {},
+    },
+  });
+
+  const spawnCall = fakeFactory.spawnCalls[0];
+  const configPath = spawnCall?.env.GEMINI_CLI_SYSTEM_SETTINGS_PATH as string | undefined;
+  expect(configPath).toBe(
+    path.join(os.tmpdir(), "kleiber-mcp", session.id, "gemini-settings.json"),
+  );
+
+  const configContent = await readFile(configPath as string, "utf8");
+  expect(configContent).toContain(`"KLEIBER_SESSION_ID":"${session.id}"`);
+  expect(configContent).toContain('"command":"/usr/bin/node"');
+
+  fakeFactory.created[0]?.emitExit({ exitCode: 0, signal: null });
+  await vi.waitFor(async () => {
+    await expect(readFile(configPath as string, "utf8")).rejects.toThrow();
   });
 });
 

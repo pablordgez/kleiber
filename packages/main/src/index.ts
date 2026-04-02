@@ -6,6 +6,12 @@ import { IPC_CHANNELS } from "@kleiber/shared";
 
 configureMainLogging(process.env.NODE_ENV === "development");
 
+if (process.platform === "linux") {
+  // Force the non-portal native dialog backend so directory pickers expose the
+  // normal folder-creation affordances expected on Linux desktop environments.
+  app.commandLine.appendSwitch("xdg-portal-required-version", "999");
+}
+
 function getContentSecurityPolicy(): string {
   const isDev = !!process.env.ELECTRON_RENDERER_URL;
   if (isDev) {

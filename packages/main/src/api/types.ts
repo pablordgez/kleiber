@@ -18,6 +18,7 @@ export interface RemoteApiStore {
 }
 
 export interface RemoteApiPackManager {
+  discoverBundledRoles(): Promise<string[]>;
   readProjectConfig(projectRoot?: string): Promise<AgentPackConfig | null>;
 }
 
@@ -41,8 +42,11 @@ export interface RemoteApiSessionManager {
     mcpLaunchConfig?: McpLaunchConfig | null;
   }): Promise<ManagedSessionRecord>;
   getSession(sessionId: UUID): ManagedSessionRecord | undefined;
+  deleteSession(sessionId: UUID): UUID[];
+  killSession(sessionId: UUID): UUID[];
   listSessions(projectId?: UUID): ManagedSessionRecord[];
   readSession(sessionId: UUID, options?: { limit?: number; plainText?: boolean }): string[];
+  resizeSession(sessionId: UUID, options: { columns: number; rows: number }): void;
   sendToSession(sessionId: UUID, input: string): void;
   on<Event extends keyof SessionManagerEvents>(
     eventName: Event,
@@ -93,6 +97,7 @@ export interface RemoteApiCreateSessionResolver {
         command: string;
         args: string[];
         env: NodeJS.ProcessEnv;
+        prompt?: string;
       };
       mcpEnabled?: boolean;
       mcpLaunchConfig?: McpLaunchConfig | null;

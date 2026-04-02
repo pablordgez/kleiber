@@ -84,16 +84,20 @@ function buildDependencies(overrides: {
     getSession: vi.fn((sessionId: string) =>
       sessions.find((session) => session.id === sessionId),
     ),
+    deleteSession: vi.fn(() => ["session-1"]),
+    killSession: vi.fn(() => ["session-1"]),
     listSessions: vi.fn((projectId: string) =>
       sessions.filter((session) => session.projectId === projectId),
     ),
     readSession: vi.fn(() => []),
+    resizeSession: vi.fn(),
     sendToSession: vi.fn(),
     on: vi.fn(),
     removeListener: vi.fn(),
   };
 
   const packManager = {
+    discoverBundledRoles: vi.fn(async () => ["architect", "requirements-engineer"]),
     readProjectConfig: vi.fn(async () => null),
   };
 
@@ -126,7 +130,7 @@ function buildDependencies(overrides: {
           cli: payload.cli ?? null,
           role: payload.role ?? null,
           requestedYolo: payload.yolo,
-          defaultYolo: project.yoloDefault,
+          defaultYolo: false,
           name: payload.name,
           workingDirectory: payload.workingDirectory ?? project.directoryPath,
           mcpEnabled: payload.mcpEnabled ?? false,
@@ -227,6 +231,17 @@ describe("remote API server", () => {
     expect(sessionsResponse.statusCode).toBe(200);
     expect(sessionsResponse.json()).toEqual(dependencies.sessions);
 
+    const sessionOptionsResponse = await app.inject({
+      method: "GET",
+      url: "/projects/project-1/session-options",
+      headers: bearerHeaders,
+    });
+    expect(sessionOptionsResponse.statusCode).toBe(200);
+    expect(sessionOptionsResponse.json()).toEqual({
+      availableHarnesses: ["claude", "codex", "opencode", "gemini"],
+      availableAgents: ["architect", "requirements-engineer"],
+    });
+
     const createResponse = await app.inject({
       method: "POST",
       url: "/projects/project-1/sessions",
@@ -251,6 +266,37 @@ describe("remote API server", () => {
         name: "Created Session",
       }),
     );
+
+    const killResponse = await app.inject({
+      method: "POST",
+      url: "/projects/project-1/sessions/session-1/kill",
+      headers: bearerHeaders,
+    });
+    expect(killResponse.statusCode).toBe(204);
+    expect(dependencies.sessionManager.killSession).toHaveBeenCalledWith("session-1");
+
+    const deleteResponse = await app.inject({
+      method: "DELETE",
+      url: "/projects/project-1/sessions/session-1",
+      headers: bearerHeaders,
+    });
+    expect(deleteResponse.statusCode).toBe(204);
+    expect(dependencies.sessionManager.deleteSession).toHaveBeenCalledWith("session-1");
+
+    const resizeResponse = await app.inject({
+      method: "POST",
+      url: "/projects/project-1/sessions/session-1/resize",
+      headers: bearerHeaders,
+      payload: {
+        columns: 120,
+        rows: 40,
+      },
+    });
+    expect(resizeResponse.statusCode).toBe(204);
+    expect(dependencies.sessionManager.resizeSession).toHaveBeenCalledWith("session-1", {
+      columns: 120,
+      rows: 40,
+    });
   });
 
   it("rate limits repeated auth requests from the same IP", async () => {

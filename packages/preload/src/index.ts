@@ -1,5 +1,14 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { Project, Session, AppSettings, AgentCli, SessionType, UUID } from "@kleiber/shared";
+import type {
+  Project,
+  Session,
+  AppSettings,
+  AgentCli,
+  RemoteApiCredentialsInput,
+  RemoteApiCredentialsSummary,
+  SessionType,
+  UUID,
+} from "@kleiber/shared";
 
 interface PackStatus {
   installed: boolean;
@@ -14,10 +23,11 @@ interface PackStatus {
 const api = {
   projects: {
     list: (): Promise<Project[]> => ipcRenderer.invoke("projects:list"),
-    create: (data: { name: string; directoryPath: string; yoloDefault?: boolean }): Promise<Project> =>
+    create: (data: { name: string; directoryPath: string }): Promise<Project> =>
       ipcRenderer.invoke("projects:create", data),
+    pickDirectory: (): Promise<string | null> => ipcRenderer.invoke("projects:pick-directory"),
     remove: (id: UUID): Promise<void> => ipcRenderer.invoke("projects:remove", id),
-    update: (id: UUID, data: Partial<Pick<Project, "name" | "yoloDefault">>): Promise<void> =>
+    update: (id: UUID, data: Partial<Pick<Project, "name">>): Promise<void> =>
       ipcRenderer.invoke("projects:update", id, data),
   },
   sessions: {
@@ -37,6 +47,7 @@ const api = {
     send: (id: UUID, input: string): Promise<void> => ipcRenderer.invoke("sessions:send", id, input),
     read: (id: UUID, limit?: number): Promise<string[]> => ipcRenderer.invoke("sessions:read", id, limit),
     kill: (id: UUID): Promise<void> => ipcRenderer.invoke("sessions:kill", id),
+    delete: (id: UUID): Promise<void> => ipcRenderer.invoke("sessions:delete", id),
     onUpdated: (callback: (session: Session) => void): (() => void) => {
       const channel = "sessions:updated";
       const listener = (_event: Electron.IpcRendererEvent, session: Session): void => callback(session);
@@ -45,13 +56,29 @@ const api = {
         ipcRenderer.removeListener(channel, listener);
       };
     },
+    onRemoved: (callback: (sessionIds: UUID[]) => void): (() => void) => {
+      const channel = "sessions:removed";
+      const listener = (_event: Electron.IpcRendererEvent, sessionIds: UUID[]): void => callback(sessionIds);
+      ipcRenderer.on(channel, listener);
+      return () => {
+        ipcRenderer.removeListener(channel, listener);
+      };
+    },
   },
   settings: {
     get: (): Promise<AppSettings> => ipcRenderer.invoke("settings:get"),
-    update: (data: Partial<AppSettings>): Promise<void> => ipcRenderer.invoke("settings:update", data),
+    update: (data: Partial<AppSettings>): Promise<AppSettings> =>
+      ipcRenderer.invoke("settings:update", data),
+  },
+  remoteApiCredentials: {
+    get: (): Promise<RemoteApiCredentialsSummary> => ipcRenderer.invoke("remote-api-credentials:get"),
+    update: (data: RemoteApiCredentialsInput): Promise<RemoteApiCredentialsSummary> =>
+      ipcRenderer.invoke("remote-api-credentials:update", data),
+    clear: (): Promise<void> => ipcRenderer.invoke("remote-api-credentials:clear"),
   },
   pack: {
     status: (projectId?: UUID): Promise<PackStatus> => ipcRenderer.invoke("pack:status", projectId),
+    detectCli: (cli: AgentCli): Promise<boolean> => ipcRenderer.invoke("pack:detect-cli", cli),
     install: (): Promise<void> => ipcRenderer.invoke("pack:install"),
     roles: (): Promise<string[]> => ipcRenderer.invoke("pack:roles"),
   },

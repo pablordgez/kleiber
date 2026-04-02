@@ -230,7 +230,7 @@ export class McpOrchestrator {
       ...(args.name?.trim() ? { name: args.name.trim() } : {}),
       workingDirectory,
       ...(args.yolo !== undefined ? { requestedYolo: args.yolo } : {}),
-      defaultYolo: project.yoloDefault,
+      defaultYolo: false,
       mcpEnabled: false,
       launch: {
         command: adapter.launchCommand,

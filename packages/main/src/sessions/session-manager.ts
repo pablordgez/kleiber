@@ -1,5 +1,8 @@
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 import type { AgentCli, SessionRecord, SessionState, SessionType, UUID } from "@kleiber/shared";
 
@@ -47,6 +50,15 @@ export interface SessionLaunchOptions {
   args?: string[];
   env?: NodeJS.ProcessEnv;
   name?: string;
+  prompt?: string;
+}
+
+interface ResolvedSessionLaunchOptions {
+  command: string;
+  args: string[];
+  env: NodeJS.ProcessEnv;
+  name: string;
+  prompt?: string;
 }
 
 export interface McpLaunchConfig {
@@ -55,6 +67,8 @@ export interface McpLaunchConfig {
   wrapperArgs: string[];
   argsTemplate?: string[];
   envTemplate?: Record<string, string>;
+  configContentTemplate?: string;
+  configFileName?: string;
 }
 
 export interface CreateSessionOptions {
@@ -100,6 +114,7 @@ export interface McpWrapperRuntime {
 export type McpWrapperFactory = (context: {
   sessionId: UUID;
   projectId: UUID;
+  workingDirectory: string;
 }) => Promise<McpWrapperRuntime> | McpWrapperRuntime;
 
 export interface ManagedSessionRecord extends SessionRecord {
@@ -143,12 +158,19 @@ interface SessionKilledEvent {
   killedSessionIds: UUID[];
 }
 
+interface SessionDeletedEvent {
+  sessionId: UUID;
+  projectId: UUID;
+  deletedSessionIds: UUID[];
+}
+
 export interface SessionManagerEvents {
   "session-created": SessionCreatedEvent;
   "session-updated": SessionUpdatedEvent;
   "session-output": SessionOutputEvent;
   "session-exited": SessionExitedEvent;
   "session-killed": SessionKilledEvent;
+  "session-deleted": SessionDeletedEvent;
 }
 
 type EventName = keyof SessionManagerEvents;
@@ -229,11 +251,24 @@ export class SessionManager extends EventEmitter {
     try {
       const spawnOptions = resolveSpawnOptions(type, options);
       if (runtime.mcpEnabled && type !== "plain") {
-        applyMcpLaunchConfig(spawnOptions, options.mcpLaunchConfig ?? null, {
+        const mcpContext = {
           sessionId: runtime.id,
           projectId: runtime.projectId,
-        });
-        const wrapperRuntime = await this.#startMcpWrapper(runtime.id, runtime.projectId);
+          workingDirectory: options.workingDirectory,
+        };
+        const mcpConfigCleanup = applyMcpLaunchConfig(
+          spawnOptions,
+          options.mcpLaunchConfig ?? null,
+          mcpContext,
+        );
+        if (mcpConfigCleanup) {
+          runtime.cleanup.push(mcpConfigCleanup);
+        }
+        const wrapperRuntime = await this.#startMcpWrapper(
+          runtime.id,
+          runtime.projectId,
+          options.workingDirectory,
+        );
         if (wrapperRuntime) {
           runtime.mcpWrapperId = wrapperRuntime.pid;
           runtime.cleanup.push({
@@ -246,7 +281,10 @@ export class SessionManager extends EventEmitter {
       const pty = await this.#getPtyFactory().then((factory) =>
         factory({
           command: spawnOptions.command,
-          args: spawnOptions.args,
+          args:
+            spawnOptions.prompt && spawnOptions.prompt.length > 0
+              ? [...spawnOptions.args, spawnOptions.prompt]
+              : spawnOptions.args,
           cwd: options.workingDirectory,
           env: { ...process.env, ...spawnOptions.env },
           columns: options.columns ?? DEFAULT_COLUMNS,
@@ -324,6 +362,17 @@ export class SessionManager extends EventEmitter {
     return killedSessionIds;
   }
 
+  deleteSession(sessionId: UUID): UUID[] {
+    const session = this.#requireSession(sessionId);
+    const deletedSessionIds = this.#cascadeDelete(sessionId);
+    this.emit("session-deleted", {
+      sessionId,
+      projectId: session.projectId,
+      deletedSessionIds,
+    });
+    return deletedSessionIds;
+  }
+
   dispose(): void {
     for (const session of this.#sessions.values()) {
       if (session.state === "running" && session.pty) {
@@ -350,7 +399,11 @@ export class SessionManager extends EventEmitter {
     return this.#loadedPtyFactoryPromise;
   }
 
-  async #startMcpWrapper(sessionId: UUID, projectId: UUID): Promise<McpWrapperRuntime | null> {
+  async #startMcpWrapper(
+    sessionId: UUID,
+    projectId: UUID,
+    workingDirectory: string,
+  ): Promise<McpWrapperRuntime | null> {
     if (!this.#mcpWrapperFactory) {
       return null;
     }
@@ -358,6 +411,7 @@ export class SessionManager extends EventEmitter {
     return this.#mcpWrapperFactory({
       sessionId,
       projectId,
+      workingDirectory,
     });
   }
 
@@ -432,6 +486,34 @@ export class SessionManager extends EventEmitter {
     }
 
     return dedupeIds(killedSessionIds);
+  }
+
+  #cascadeDelete(sessionId: UUID): UUID[] {
+    const session = this.#sessions.get(sessionId);
+    if (!session) {
+      return [];
+    }
+
+    if (session.state !== "exited") {
+      throw new Error(`Session ${sessionId} must be exited before it can be deleted.`);
+    }
+
+    const deletedSessionIds: UUID[] = [];
+
+    for (const childId of [...session.childSessionIds]) {
+      for (const deletedId of this.#cascadeDelete(childId)) {
+        deletedSessionIds.push(deletedId);
+      }
+    }
+
+    if (session.parentSessionId) {
+      this.#sessions.get(session.parentSessionId)?.childSessionIds.delete(session.id);
+    }
+
+    this.#sessions.delete(session.id);
+    cleanupRuntime(session);
+    deletedSessionIds.push(session.id);
+    return dedupeIds(deletedSessionIds);
   }
 
   #snapshot(session: SessionRuntimeRecord): ManagedSessionRecord {
@@ -552,13 +634,14 @@ function resolveEffectiveYolo(
 function resolveSpawnOptions(
   type: SessionType,
   options: CreateSessionOptions,
-): Required<SessionLaunchOptions> {
+): ResolvedSessionLaunchOptions {
   if (options.launch?.command) {
     return {
       command: options.launch.command,
       args: options.launch.args ?? [],
       env: options.launch.env ?? {},
       name: options.launch.name ?? defaultPtyName(),
+      ...(options.launch.prompt ? { prompt: options.launch.prompt } : {}),
     };
   }
 
@@ -575,21 +658,49 @@ function resolveSpawnOptions(
 }
 
 function applyMcpLaunchConfig(
-  spawnOptions: Required<SessionLaunchOptions>,
+  spawnOptions: ResolvedSessionLaunchOptions,
   config: McpLaunchConfig | null,
-  context: { sessionId: UUID; projectId: UUID },
-): void {
+  context: { sessionId: UUID; projectId: UUID; workingDirectory: string },
+): Disposable | null {
   const wrapperCommand = config?.wrapperCommand ?? process.execPath;
   const wrapperArgs = config?.wrapperArgs ?? [];
+  const mcpConfigPath = config?.configContentTemplate
+    ? resolveMcpConfigPath(context.sessionId, config.configFileName)
+    : null;
+
+  if (mcpConfigPath && config?.configContentTemplate) {
+    mkdirSync(path.dirname(mcpConfigPath), { recursive: true });
+    writeFileSync(
+      mcpConfigPath,
+      replaceTemplateValue(
+        config.configContentTemplate,
+        context,
+        wrapperCommand,
+        wrapperArgs,
+        mcpConfigPath,
+      ),
+      "utf8",
+    );
+  }
+
   const baseEnv: NodeJS.ProcessEnv = {
     KLEIBER_MCP_ENABLED: "true",
     KLEIBER_MCP_TRANSPORT: "stdio",
     KLEIBER_MCP_SESSION_ID: context.sessionId,
     KLEIBER_MCP_PROJECT_ID: context.projectId,
-    KLEIBER_MCP_SOCKET_PATH: resolveMcpSocketPath(context.sessionId),
+    KLEIBER_MCP_SOCKET_PATH: resolveMcpSocketPath(context.sessionId, context.workingDirectory),
+    KLEIBER_MCP_DEBUG_LOG_PATH: resolveMcpDebugLogPath(context.sessionId, context.workingDirectory),
     KLEIBER_MCP_SERVER_COMMAND: wrapperCommand,
     KLEIBER_MCP_SERVER_ARGS_JSON: JSON.stringify(wrapperArgs),
-    ...(config?.envTemplate ? replaceTemplateValues(config.envTemplate, context, wrapperCommand, wrapperArgs) : {}),
+    ...(config?.envTemplate
+      ? replaceTemplateValues(
+          config.envTemplate,
+          context,
+          wrapperCommand,
+          wrapperArgs,
+          mcpConfigPath,
+        )
+      : {}),
   };
 
   spawnOptions.env = {
@@ -600,40 +711,66 @@ function applyMcpLaunchConfig(
   if (config?.injectionMethod === "argv" && config.argsTemplate) {
     spawnOptions.args = [
       ...spawnOptions.args,
-      ...config.argsTemplate.map((entry) => replaceTemplateValue(entry, context, wrapperCommand, wrapperArgs)),
+      ...config.argsTemplate.map((entry) =>
+        replaceTemplateValue(entry, context, wrapperCommand, wrapperArgs, mcpConfigPath),
+      ),
     ];
   }
+
+  if (!mcpConfigPath) {
+    return null;
+  }
+
+  return {
+    dispose: () => {
+      rmSync(path.dirname(mcpConfigPath), { recursive: true, force: true });
+    },
+  };
 }
 
 function replaceTemplateValues(
   template: Record<string, string>,
-  context: { sessionId: UUID; projectId: UUID },
+  context: { sessionId: UUID; projectId: UUID; workingDirectory: string },
   wrapperCommand: string,
   wrapperArgs: string[],
+  mcpConfigPath?: string | null,
 ): Record<string, string> {
   return Object.fromEntries(
     Object.entries(template).map(([key, value]) => [
       key,
-      replaceTemplateValue(value, context, wrapperCommand, wrapperArgs),
+      replaceTemplateValue(value, context, wrapperCommand, wrapperArgs, mcpConfigPath),
     ]),
   );
 }
 
 function replaceTemplateValue(
   value: string,
-  context: { sessionId: UUID; projectId: UUID },
+  context: { sessionId: UUID; projectId: UUID; workingDirectory: string },
   wrapperCommand: string,
   wrapperArgs: string[],
+  mcpConfigPath?: string | null,
 ): string {
-  const socketPath = resolveMcpSocketPath(context.sessionId);
+  const socketPath = resolveMcpSocketPath(context.sessionId, context.workingDirectory);
+  const debugLogPath = resolveMcpDebugLogPath(context.sessionId, context.workingDirectory);
   return value
     .replaceAll("{sessionId}", context.sessionId)
     .replaceAll("{projectId}", context.projectId)
     .replaceAll("{mcpSocketPath}", socketPath)
+    .replaceAll("{mcpDebugLogPath}", debugLogPath)
+    .replaceAll("{mcpDebugLogPathJson}", JSON.stringify(debugLogPath))
     .replaceAll("{wrapperCommand}", wrapperCommand)
     .replaceAll("{wrapperCommandJson}", JSON.stringify(wrapperCommand))
     .replaceAll("{wrapperCommandAndArgsJson}", JSON.stringify([wrapperCommand, ...wrapperArgs]))
-    .replaceAll("{wrapperArgsJson}", JSON.stringify(wrapperArgs));
+    .replaceAll("{wrapperArgsJson}", JSON.stringify(wrapperArgs))
+    .replaceAll("{mcpConfigPath}", mcpConfigPath ?? "");
+}
+
+function resolveMcpConfigPath(sessionId: UUID, fileName = "mcp-config.json"): string {
+  return path.join(os.tmpdir(), "kleiber-mcp", sessionId, fileName);
+}
+
+function resolveMcpDebugLogPath(sessionId: UUID, workingDirectory: string): string {
+  return path.join(workingDirectory, ".kleiber", "logs", "mcp", `${sessionId}.log`);
 }
 
 function resolveDefaultShell(): string {

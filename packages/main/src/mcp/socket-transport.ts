@@ -1,7 +1,7 @@
 import net from "node:net";
-import os from "node:os";
 import path from "node:path";
-import { unlink } from "node:fs/promises";
+import { mkdir, unlink } from "node:fs/promises";
+import log from "electron-log";
 
 import type { UUID } from "@kleiber/shared";
 
@@ -13,26 +13,40 @@ export interface McpSocketBridgeRuntime {
   dispose(): Promise<void>;
 }
 
-export function resolveMcpSocketPath(sessionId: UUID): string {
+export function resolveMcpSocketPath(sessionId: UUID, workingDirectory?: string): string {
   if (process.platform === "win32") {
     return `\\\\.\\pipe\\kleiber-mcp-${sessionId}`;
   }
 
-  return path.join(os.tmpdir(), `kleiber-mcp-${sessionId}.sock`);
+  const socketFileName = `${sessionId.slice(0, 12)}.sock`;
+  const baseDirectory = workingDirectory
+    ? path.join(workingDirectory, ".kleiber", "mcp")
+    : path.join(process.cwd(), ".kleiber", "mcp");
+  return path.join(baseDirectory, socketFileName);
 }
 
 export async function createMcpSocketBridgeServer(options: {
   sessionId: UUID;
+  workingDirectory?: string;
   onRequest: (message: WrapperToParentRequest) => Promise<ParentToWrapperResponse>;
 }): Promise<McpSocketBridgeRuntime> {
-  const socketPath = resolveMcpSocketPath(options.sessionId);
+  const socketPath = resolveMcpSocketPath(options.sessionId, options.workingDirectory);
+  log.debug("[mcp] socket bridge init", {
+    sessionId: options.sessionId,
+    socketPath,
+  });
   if (process.platform !== "win32") {
+    await mkdir(path.dirname(socketPath), { recursive: true });
     await safeUnlink(socketPath);
   }
 
   const sockets = new Set<net.Socket>();
   const server = net.createServer((socket) => {
     sockets.add(socket);
+    log.debug("[mcp] socket bridge connected", {
+      sessionId: options.sessionId,
+      socketPath,
+    });
     let buffer = "";
 
     socket.setEncoding("utf8");
@@ -56,9 +70,18 @@ export async function createMcpSocketBridgeServer(options: {
 
     socket.on("close", () => {
       sockets.delete(socket);
+      log.debug("[mcp] socket bridge closed", {
+        sessionId: options.sessionId,
+        socketPath,
+      });
     });
-    socket.on("error", () => {
+    socket.on("error", (error) => {
       sockets.delete(socket);
+      log.error("[mcp] socket bridge socket error", {
+        sessionId: options.sessionId,
+        socketPath,
+        error: error instanceof Error ? error.message : String(error),
+      });
     });
   });
 
@@ -66,6 +89,10 @@ export async function createMcpSocketBridgeServer(options: {
     server.once("error", reject);
     server.listen(socketPath, () => {
       server.off("error", reject);
+      log.debug("[mcp] socket bridge listening", {
+        sessionId: options.sessionId,
+        socketPath,
+      });
       resolve();
     });
   });
@@ -111,7 +138,17 @@ async function handleSocketMessage(
     return;
   }
 
+  log.debug("[mcp] socket bridge request", {
+    sessionId: parsed.context.sessionId,
+    projectId: parsed.context.projectId,
+    method: parsed.method,
+  });
   const response = await onRequest(parsed);
+  log.debug("[mcp] socket bridge response", {
+    sessionId: parsed.context.sessionId,
+    method: parsed.method,
+    ok: response.ok,
+  });
   socket.write(`${JSON.stringify(response)}\n`);
 }
 

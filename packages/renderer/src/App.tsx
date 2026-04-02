@@ -27,6 +27,7 @@ export const App: React.FC = () => {
 
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [isNewSessionOpen, setIsNewSessionOpen] = useState(false);
+  const [isNewProjectOpen, setIsNewProjectOpen] = useState(false);
   const [newSessionProjectId, setNewSessionProjectId] = useState<UUID | null>(null);
   const [newSessionParentId, setNewSessionParentId] = useState<UUID | null>(null);
 
@@ -64,22 +65,42 @@ export const App: React.FC = () => {
   }, [updateSession]);
 
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === 't') {
-        e.preventDefault();
-        if (selectedProjectId) {
-          setNewSessionProjectId(selectedProjectId);
-          setIsNewSessionOpen(true);
+    const unsubNewProject = window.kleiber.shortcuts.onNewProject(() => {
+      setIsNewProjectOpen(true);
+    });
+    const unsubNewSession = window.kleiber.shortcuts.onNewSession(() => {
+      if (selectedProjectId) {
+        setNewSessionProjectId(selectedProjectId);
+        setIsNewSessionOpen(true);
+      }
+    });
+    const unsubNewSubSession = window.kleiber.shortcuts.onNewSubSession(() => {
+      if (selectedProjectId) {
+        setNewSessionProjectId(selectedProjectId);
+        if (selectedSessionId) {
+          setNewSessionParentId(selectedSessionId);
         }
+        setIsNewSessionOpen(true);
       }
-      if ((e.ctrlKey || e.metaKey) && e.key === ',') {
-        e.preventDefault();
-        console.log('Settings shortcut — not yet implemented');
+    });
+    const unsubKillSession = window.kleiber.shortcuts.onKillSession(() => {
+      if (selectedSessionId) {
+        window.kleiber.sessions
+          .kill(selectedSessionId)
+          .catch((err: unknown) => console.error('Failed to kill session', err));
       }
+    });
+    const unsubOpenSettings = window.kleiber.shortcuts.onOpenSettings(() => {
+      console.log('Settings shortcut — not yet implemented');
+    });
+    return () => {
+      unsubNewProject();
+      unsubNewSession();
+      unsubNewSubSession();
+      unsubKillSession();
+      unsubOpenSettings();
     };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedProjectId]);
+  }, [selectedProjectId, selectedSessionId]);
 
   const selectedProject = projects.find((p) => p.id === selectedProjectId) ?? null;
   const selectedSession = sessions.find((s) => s.id === selectedSessionId) ?? null;
@@ -130,6 +151,8 @@ export const App: React.FC = () => {
         remoteApiEnabled={settings?.remoteApiEnabled ?? false}
         remoteApiPort={settings?.remoteApiPort ?? null}
         onNewSession={handleNewSession}
+        newProjectOpen={isNewProjectOpen}
+        onNewProjectOpenChange={setIsNewProjectOpen}
       />
 
       <main className="flex-1 flex flex-col min-w-0 overflow-hidden">

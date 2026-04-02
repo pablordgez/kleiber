@@ -7,7 +7,7 @@
     "build": "echo \"Built from root via electron-vite\"",
     "clean": "rimraf ../../dist/main",
     "lint": "eslint .",
-    "test": "vitest run packages/main/src/**/*.test.ts",
+    "test": "vitest run src/**/*.test.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {

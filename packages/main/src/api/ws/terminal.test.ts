@@ -327,7 +327,7 @@ describe("terminal websocket routes", () => {
     await expect(outputMessage).resolves.toEqual({
       type: "output",
       sessionId: "session-1",
-      chunk: "tail",
+      data: "tail",
     });
 
     const exitMessage = waitForMessage(socket);

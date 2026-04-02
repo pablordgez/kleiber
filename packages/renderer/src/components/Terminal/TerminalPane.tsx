@@ -127,7 +127,11 @@ export const TerminalPane: React.FC<TerminalPaneProps> = ({ sessionId }) => {
   }, [sessionId]);
 
   return (
-    <div className="flex-1 w-full h-full relative flex flex-col" style={{ minHeight: 0 }}>
+    <div
+      data-testid="terminal-pane"
+      className="flex-1 w-full h-full relative flex flex-col"
+      style={{ minHeight: 0 }}
+    >
       {error && <div className="bg-[#EF4444]/10 text-[#EF4444] px-4 py-2 text-xs font-mono border-b border-[#1C1C1C]">{error}</div>}
       {sessionEnded ? (
         <div className="flex-1 flex items-center justify-center text-[#666666] text-sm font-mono select-none">

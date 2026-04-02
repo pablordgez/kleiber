@@ -2,7 +2,7 @@ import { accessSync, constants as fsConstants } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { ipcMain, BrowserWindow, dialog } from "electron";
-import { IPC_CHANNELS, SUPPORTED_AGENT_CLIS } from "@kleiber/shared";
+import { BUNDLED_PACK_DISPLAY_NAME, IPC_CHANNELS, SUPPORTED_AGENT_CLIS } from "@kleiber/shared";
 import log from "electron-log";
 import type {
   AgentCli,
@@ -467,11 +467,17 @@ function isExecutableFile(filePath: string): boolean {
   }
 }
 
-function buildCodexAgentBootstrapPrompt(role: string): string {
+function buildCodexAgentBootstrapPrompt(role: string, mcpEnabled: boolean): string {
   return [
-    `Use the ${role} agent workflow for this repository.`,
-    `Before doing anything else, read .codex/agents/${role}.toml if it exists and adopt its description and developer_instructions for this top-level session.`,
-    "Then briefly state that the agent context is loaded and wait for the user's task.",
+    `You are operating inside Kleiber as the ${role} role from ${BUNDLED_PACK_DISPLAY_NAME}.`,
+    "Treat other kleiber-agents roles as peer specialists in the same ecosystem.",
+    mcpEnabled
+      ? "Kleiber session orchestration may be available in this session through the existing MCP tools."
+      : "Kleiber session orchestration is disabled for this session, so do not assume MCP access.",
+    "Distinguish Kleiber session orchestration from harness-native delegation features.",
+    `Before doing anything else, read .agents/skills/project-spec-utils/references/kleiber-ecosystem.md if it exists, then read .codex/agents/${role}.toml if it exists and adopt its description and developer_instructions for this top-level session.`,
+    "If Kleiber orchestration or tool availability is uncertain, inspect local context and available capabilities before claiming support.",
+    "Briefly state that the Kleiber agent context is loaded and wait for the user's task.",
   ].join(" ");
 }
 
@@ -565,11 +571,12 @@ export async function resolveSessionCreateOptions(
   const override = resolveAgentOverride(packConfig, adapter.harnessName);
   const launchArgs: string[] = [];
   let launchPrompt: string | undefined;
+  const requestedMcpEnabled = payload.mcpEnabled ?? true;
 
   if (role) {
     const usedRoleActivation = addRoleLaunchArgs(launchArgs, override, role);
     if (!usedRoleActivation && canonicalCli === "codex") {
-      launchPrompt = buildCodexAgentBootstrapPrompt(role);
+      launchPrompt = buildCodexAgentBootstrapPrompt(role, requestedMcpEnabled);
     }
   }
 
@@ -578,7 +585,6 @@ export async function resolveSessionCreateOptions(
   }
 
   createSessionInput.cli = canonicalCli;
-  const requestedMcpEnabled = payload.mcpEnabled ?? true;
   const mcpLaunchConfig = requestedMcpEnabled
     ? resolveMcpLaunchConfig(adapter.mcpInjection, override, options.mcpRuntime)
     : null;

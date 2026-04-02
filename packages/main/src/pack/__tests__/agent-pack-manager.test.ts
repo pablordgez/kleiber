@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { ChildProcess } from "node:child_process";
+import { PRIMARY_BUNDLED_PACK_DIR } from "@kleiber/shared";
 import { AgentPackManager } from "../agent-pack-manager";
 
 // Mock node:fs/promises at the top level
@@ -17,7 +18,7 @@ const mockReaddir = readdir as ReturnType<typeof vi.fn>;
 
 const HOME = "/home/testuser";
 const CWD = "/projects/myapp";
-const PACK_ROOT = "/projects/myapp/coding-agent-pack";
+const PACK_ROOT = `/projects/myapp/${PRIMARY_BUNDLED_PACK_DIR}`;
 
 describe("AgentPackManager", () => {
   beforeEach(() => {

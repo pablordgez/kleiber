@@ -1,2 +1,0 @@
-prompt = "Use the requirements-engineer workflow for this repository. Inspect local project context first, ask focused high-value questions, and create a new numbered requirements draft under .agent_specs/. Never overwrite an existing draft unless explicitly asked."
-description = "Run the Requirements Engineer workflow for this project."

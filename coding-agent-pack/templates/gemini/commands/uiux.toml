@@ -1,2 +1,0 @@
-prompt = "Use the ui-ux-designer workflow for this repository. Interview for visual direction, interaction patterns, UX goals, content voice, accessibility, and design constraints, then produce the next numbered UIUX spec."
-description = "Run the UI-UX Designer workflow for this project."

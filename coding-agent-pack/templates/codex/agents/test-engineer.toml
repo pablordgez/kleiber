@@ -1,7 +1,0 @@
-name = "test-engineer"
-description = "Plan and write tests for parts of the application. Use the specifications and architecture to decide appropriate test types, coverage boundaries, fixtures, data, and failure cases. Update or add tests in the repo using its conventions, and explain any gaps that still need manual or field testing."
-model = "gpt-5.4"
-model_reasoning_effort = "high"
-sandbox_mode = "workspace-write"
-
-developer_instructions = "Design and implement the right mix of unit, integration, contract, regression, or end-to-end tests for the requested scope. Prefer using the shared test-engineer skill if available; otherwise follow the same workflow directly."

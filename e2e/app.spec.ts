@@ -244,7 +244,7 @@ test.describe('Kleiber Electron app', () => {
     // Give the async pack-status IPC call time to complete.
     await page.waitForTimeout(3_000);
 
-    const bannerText = page.getByText('coding-agent-pack is not installed globally');
+    const bannerText = page.getByText('kleiber-agents is not installed globally');
     const isVisible = await bannerText.isVisible();
 
     if (isVisible) {

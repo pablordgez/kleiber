@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
+import { LEGACY_BUNDLED_PACK_DIR, PRIMARY_BUNDLED_PACK_DIR } from "@kleiber/shared";
 
 import { AgentPackManager } from "./agent-pack-manager";
 
@@ -68,7 +69,7 @@ describe("AgentPackManager", () => {
   it("detects global installs and discovers bundled roles", async () => {
     const tempRoot = await createTempRoot("pack-manager-");
     const homeDir = path.join(tempRoot, "home");
-    const bundledSkillsDir = path.join(tempRoot, "coding-agent-pack", "shared", ".agents", "skills");
+    const bundledSkillsDir = path.join(tempRoot, PRIMARY_BUNDLED_PACK_DIR, "shared", ".agents", "skills");
 
     await mkdir(path.join(homeDir, ".agents", "skills", "requirements-engineer"), { recursive: true });
     await writeFile(
@@ -84,7 +85,7 @@ describe("AgentPackManager", () => {
     const manager = new AgentPackManager({
       cwd: tempRoot,
       homeDir,
-      packRoot: path.join(tempRoot, "coding-agent-pack"),
+      packRoot: path.join(tempRoot, PRIMARY_BUNDLED_PACK_DIR),
     });
 
     expect(await manager.isGlobalInstallPresent()).toBe(true);
@@ -101,7 +102,7 @@ describe("AgentPackManager", () => {
     const manager = new AgentPackManager({
       cwd: tempRoot,
       homeDir: path.join(tempRoot, "home"),
-      packRoot: path.join(tempRoot, "coding-agent-pack"),
+      packRoot: path.join(tempRoot, PRIMARY_BUNDLED_PACK_DIR),
     });
 
     expect((await manager.readProjectConfig(tempRoot))?.models.defaults.medium_complexity.model).toBe("gpt-5.4");
@@ -131,5 +132,20 @@ describe("AgentPackManager", () => {
       command: "bash",
       args: [path.join(tempRoot, "install.sh"), "--mode", "global", "--copy"],
     });
+  });
+
+  it("falls back to the legacy bundle directory when the primary directory is absent", async () => {
+    const tempRoot = await createTempRoot("pack-manager-");
+    const legacySkillsDir = path.join(tempRoot, LEGACY_BUNDLED_PACK_DIR, "shared", ".agents", "skills", "architect");
+
+    await mkdir(legacySkillsDir, { recursive: true });
+    await writeFile(path.join(legacySkillsDir, "SKILL.md"), "# role", "utf8");
+
+    const manager = new AgentPackManager({
+      cwd: tempRoot,
+      homeDir: path.join(tempRoot, "home"),
+    });
+
+    expect(await manager.discoverBundledRoles()).toEqual(["architect"]);
   });
 });

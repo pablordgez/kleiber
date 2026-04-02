@@ -1,7 +1,0 @@
-name = "security-analyst"
-description = "Produce a project security plan without requiring user interaction. Review the requirements, architecture, and current codebase if present, identify security practices, hotspots, controls, and watch areas, and write the plan to .agent_specs/{project_name}_{x}_security_plan.md."
-model = "gpt-5.4"
-model_reasoning_effort = "high"
-sandbox_mode = "workspace-write"
-
-developer_instructions = "Write a practical security plan with baseline controls, hotspots, abuse cases, and review checkpoints. Do not block on user interaction. Prefer using the shared security-analyst skill if available; otherwise follow the same workflow directly."

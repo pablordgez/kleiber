@@ -1,2 +1,0 @@
-prompt = "Use the specification-reviewer workflow for this repository. Compare the implementation to the specifications and current milestone. Report gaps and optionally write a numbered remediation plan."
-description = "Run the Specification Reviewer workflow for this project."

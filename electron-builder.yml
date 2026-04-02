@@ -13,8 +13,8 @@ files:
 
 # Extra resources copied outside the asar (accessible at runtime via process.resourcesPath)
 extraResources:
-  - from: coding-agent-pack
-    to: coding-agent-pack
+  - from: kleiber-agents
+    to: kleiber-agents
   - from: dist/web
     to: web
     filter:

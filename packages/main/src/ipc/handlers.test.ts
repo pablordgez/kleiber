@@ -1,9 +1,10 @@
-import { mkdtemp, stat } from "node:fs/promises";
+import { chmod, mkdtemp, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { IPC_CHANNELS, type AgentPackConfig, type Project } from "@kleiber/shared";
+import log from "electron-log";
 
 const mockState = vi.hoisted(() => {
   return {
@@ -16,6 +17,7 @@ const mockState = vi.hoisted(() => {
     sendSessionMock: vi.fn(),
     readSessionMock: vi.fn(() => []),
     killSessionMock: vi.fn(),
+    deleteSessionMock: vi.fn(),
     resizeSessionMock: vi.fn(),
     listProjectsMock: vi.fn(() => []),
     getProjectMock: vi.fn(),
@@ -29,6 +31,9 @@ const mockState = vi.hoisted(() => {
       quickLaunchShortcut: "",
     })),
     setSettingsMock: vi.fn(),
+    getRemoteApiCredentialsMock: vi.fn(() => null),
+    setRemoteApiCredentialsMock: vi.fn(),
+    clearRemoteApiCredentialsMock: vi.fn(),
     readProjectConfigMock: vi.fn(async () => null as AgentPackConfig | null),
     discoverBundledRolesMock: vi.fn(async () => ["architect", "task-planner"]),
     getPackStatusMock: vi.fn(async () => ({
@@ -48,6 +53,9 @@ const mockState = vi.hoisted(() => {
       stderr: "",
     })),
     notifySessionExitIfUnfocusedMock: vi.fn(),
+    showOpenDialogMock: vi.fn(async () => ({ canceled: true, filePaths: [] })),
+    globalShortcutRegisterMock: vi.fn(() => true),
+    globalShortcutUnregisterMock: vi.fn(),
   };
 });
 
@@ -59,6 +67,14 @@ vi.mock("electron", () => ({
   },
   BrowserWindow: {
     getAllWindows: () => [],
+    getFocusedWindow: () => null,
+  },
+  dialog: {
+    showOpenDialog: (...args: any[]) => mockState.showOpenDialogMock(...args),
+  },
+  globalShortcut: {
+    register: (...args: any[]) => mockState.globalShortcutRegisterMock(...args),
+    unregister: (...args: any[]) => mockState.globalShortcutUnregisterMock(...args),
   },
 }));
 
@@ -78,6 +94,7 @@ vi.mock("../sessions/session-manager", () => {
     sendToSession = mockState.sendSessionMock;
     readSession = mockState.readSessionMock;
     killSession = mockState.killSessionMock;
+    deleteSession = mockState.deleteSessionMock;
     resizeSession = mockState.resizeSessionMock;
   }
 
@@ -92,6 +109,9 @@ vi.mock("../store", () => {
     removeProject = mockState.removeProjectMock;
     getSettings = mockState.getSettingsMock;
     setSettings = mockState.setSettingsMock;
+    getRemoteApiCredentials = mockState.getRemoteApiCredentialsMock;
+    setRemoteApiCredentials = mockState.setRemoteApiCredentialsMock;
+    clearRemoteApiCredentials = mockState.clearRemoteApiCredentialsMock;
   }
 
   return { PersistenceStore: PersistenceStoreMock };
@@ -186,6 +206,7 @@ describe("IPC handlers remediation", () => {
     mockState.sendSessionMock.mockReset();
     mockState.readSessionMock.mockReset().mockReturnValue([]);
     mockState.killSessionMock.mockReset();
+    mockState.deleteSessionMock.mockReset();
     mockState.resizeSessionMock.mockReset();
 
     (mockState.listProjectsMock as any)
@@ -216,7 +237,17 @@ describe("IPC handlers remediation", () => {
       stdout: "ok",
       stderr: "",
     });
+    mockState.getRemoteApiCredentialsMock.mockReset().mockReturnValue(null);
+    mockState.setRemoteApiCredentialsMock.mockReset();
+    mockState.clearRemoteApiCredentialsMock.mockReset();
     mockState.notifySessionExitIfUnfocusedMock.mockReset();
+    mockState.showOpenDialogMock.mockReset().mockResolvedValue({
+      canceled: true,
+      filePaths: [],
+    });
+    mockState.globalShortcutRegisterMock.mockReset().mockReturnValue(true);
+    mockState.globalShortcutUnregisterMock.mockReset();
+    vi.mocked(log.error).mockClear();
   });
 
   it("creates project directories when missing and stores an absolute path", async () => {
@@ -239,6 +270,20 @@ describe("IPC handlers remediation", () => {
     const savedProject = mockState.saveProjectMock.mock.calls.at(-1)?.[0] as Project;
     expect(savedProject.directoryPath).toBe(path.resolve(requestedDir));
     expect(createdProject.directoryPath).toBe(path.resolve(requestedDir));
+  });
+
+  it("returns the selected absolute project directory from the picker IPC", async () => {
+    const { registerIpcHandlers } = await import("./handlers.js");
+    registerIpcHandlers();
+
+    const requestedDir = path.join("tmp", "kleiber-picked-project");
+    mockState.showOpenDialogMock.mockResolvedValue({
+      canceled: false,
+      filePaths: [requestedDir],
+    });
+
+    const handler = mockState.registeredHandlers.get(IPC_CHANNELS.projects.pickDirectory);
+    await expect(handler?.({})).resolves.toBe(path.resolve(requestedDir));
   });
 
   it("defaults session workingDirectory to project root and forwards parentSessionId", async () => {
@@ -265,7 +310,7 @@ describe("IPC handlers remediation", () => {
     const createInput = mockState.createSessionMock.mock.calls.at(-1)?.[0] as Record<string, unknown>;
     expect(createInput.workingDirectory).toBe(projectDir);
     expect(createInput.parentSessionId).toBe("parent-session-1");
-    expect(createInput.defaultYolo).toBe(true);
+    expect(createInput.defaultYolo).toBe(false);
     expect(createInput.launch).toBeUndefined();
   });
 
@@ -315,6 +360,36 @@ describe("IPC handlers remediation", () => {
     expect(createInput.launch.env).toEqual({ KLEIBER_AGENT_ROLE: "architect" });
   });
 
+  it("bootstraps Codex harness + agent sessions with an initial prompt when no role flag exists", async () => {
+    const { registerIpcHandlers } = await import("./handlers.js");
+    registerIpcHandlers();
+
+    const projectDir = await mkdtemp(path.join(os.tmpdir(), "kleiber-codex-agent-"));
+    mockState.projects.set("project-codex-agent", {
+      id: "project-codex-agent",
+      name: "Project Codex Agent",
+      directoryPath: projectDir,
+      yoloDefault: false,
+      createdAt: new Date().toISOString(),
+    });
+
+    const handler = mockState.registeredHandlers.get(IPC_CHANNELS.sessions.create);
+    await handler?.({}, {
+      projectId: "project-codex-agent",
+      name: "Architect",
+      type: "agent_role",
+      cli: "codex",
+      role: "architect",
+    });
+
+    const createInput = mockState.createSessionMock.mock.calls.at(-1)?.[0] as Record<string, any>;
+    expect(createInput.launch.command).toBe("codex");
+    expect(createInput.launch.args).toEqual([]);
+    expect(createInput.launch.env).toEqual({ KLEIBER_AGENT_ROLE: "architect" });
+    expect(createInput.launch.prompt).toContain("Use the architect agent workflow");
+    expect(createInput.launch.prompt).toContain(".codex/agents/architect.toml");
+  });
+
   it("builds inline Codex MCP config for agent sessions", async () => {
     const { registerIpcHandlers } = await import("./handlers.js");
     registerIpcHandlers();
@@ -354,6 +429,10 @@ describe("IPC handlers remediation", () => {
       "mcp_servers.kleiber.env.KLEIBER_PROJECT_ID={projectId}",
       "-c",
       "mcp_servers.kleiber.env.KLEIBER_MCP_SOCKET_PATH={mcpSocketPath}",
+      "-c",
+      "mcp_servers.kleiber.env.KLEIBER_MCP_DEBUG_LOG_PATH={mcpDebugLogPathJson}",
+      "-c",
+      'mcp_servers.kleiber.env.ELECTRON_RUN_AS_NODE="1"',
     ]);
   });
 
@@ -390,6 +469,45 @@ describe("IPC handlers remediation", () => {
     });
     expect(createInput.mcpLaunchConfig.envTemplate.OPENCODE_CONFIG_CONTENT).toContain("{wrapperCommandAndArgsJson}");
     expect(createInput.mcpLaunchConfig.envTemplate.OPENCODE_CONFIG_CONTENT).toContain("{mcpSocketPath}");
+    expect(createInput.mcpLaunchConfig.envTemplate.OPENCODE_CONFIG_CONTENT).toContain("{mcpDebugLogPath}");
+    expect(createInput.mcpLaunchConfig.envTemplate.OPENCODE_CONFIG_CONTENT).toContain("ELECTRON_RUN_AS_NODE");
+  });
+
+  it("builds Gemini MCP config-file injection for agent sessions", async () => {
+    const { registerIpcHandlers } = await import("./handlers.js");
+    registerIpcHandlers();
+
+    const projectDir = await mkdtemp(path.join(os.tmpdir(), "kleiber-gemini-mcp-"));
+    mockState.projects.set("project-gemini", {
+      id: "project-gemini",
+      name: "Project Gemini",
+      directoryPath: projectDir,
+      yoloDefault: false,
+      createdAt: new Date().toISOString(),
+    });
+
+    const handler = mockState.registeredHandlers.get(IPC_CHANNELS.sessions.create);
+    await handler?.({}, {
+      projectId: "project-gemini",
+      name: "Gemini MCP",
+      type: "agent",
+      cli: "gemini",
+    });
+
+    const createInput = mockState.createSessionMock.mock.calls.at(-1)?.[0] as Record<string, any>;
+    expect(createInput.cli).toBe("gemini");
+    expect(createInput.mcpEnabled).toBe(true);
+    expect(createInput.mcpLaunchConfig).toMatchObject({
+      injectionMethod: "env",
+      wrapperCommand: process.execPath,
+      envTemplate: {
+        GEMINI_CLI_SYSTEM_SETTINGS_PATH: "{mcpConfigPath}",
+      },
+      configFileName: "gemini-settings.json",
+    });
+    expect(createInput.mcpLaunchConfig.configContentTemplate).toContain('"mcpServers"');
+    expect(createInput.mcpLaunchConfig.configContentTemplate).toContain("{mcpDebugLogPath}");
+    expect(createInput.mcpLaunchConfig.configContentTemplate).toContain("ELECTRON_RUN_AS_NODE");
   });
 
   it("allows MCP to be disabled per session even when the harness supports it", async () => {
@@ -494,6 +612,30 @@ describe("IPC handlers remediation", () => {
     expect(status.bundledRoles).toEqual(["architect"]);
     expect(roles).toEqual(["architect", "task-planner"]);
     expect(mockState.getPackStatusMock).toHaveBeenCalledWith(projectDir);
+  });
+
+  it("detects whether a CLI binary exists on PATH", async () => {
+    const { registerIpcHandlers } = await import("./handlers.js");
+    registerIpcHandlers();
+
+    const binDir = await mkdtemp(path.join(os.tmpdir(), "kleiber-bin-"));
+    const commandName = process.platform === "win32" ? "codex.cmd" : "codex";
+    const commandPath = path.join(binDir, commandName);
+    await writeFile(commandPath, process.platform === "win32" ? "@echo off\r\n" : "#!/bin/sh\n");
+    if (process.platform !== "win32") {
+      await chmod(commandPath, 0o755);
+    }
+
+    const originalPath = process.env.PATH;
+    process.env.PATH = `${binDir}${path.delimiter}${originalPath ?? ""}`;
+
+    try {
+      const handler = mockState.registeredHandlers.get(IPC_CHANNELS.pack.detectCli);
+      await expect(handler?.({}, "codex")).resolves.toBe(true);
+      await expect(handler?.({}, "opencode")).resolves.toBe(false);
+    } finally {
+      process.env.PATH = originalPath;
+    }
   });
 
   it("builds MCP argv launch config and role args templates for agent sessions", async () => {
@@ -617,7 +759,7 @@ describe("IPC handlers remediation", () => {
       },
     );
 
-    expect(createSessionInput.defaultYolo).toBe(true);
+    expect(createSessionInput.defaultYolo).toBe(false);
     expect(createSessionInput.launch).toEqual({
       command: "codex",
       args: ["--dangerously-bypass-approvals-and-sandbox"],
@@ -685,5 +827,73 @@ describe("IPC handlers remediation", () => {
       },
       [],
     );
+  });
+
+  it("hashes and stores remote API credentials from IPC", async () => {
+    const { registerIpcHandlers } = await import("./handlers.js");
+    registerIpcHandlers();
+
+    const handler = mockState.registeredHandlers.get(IPC_CHANNELS.remoteApiCredentials.update);
+    const summary = await handler?.({}, {
+      username: "alice",
+      password: "super-secret",
+    });
+
+    const savedCredentials = mockState.setRemoteApiCredentialsMock.mock.calls.at(-1)?.[0] as {
+      username: string;
+      passwordHash: string;
+    };
+
+    expect(savedCredentials.username).toBe("alice");
+    expect(savedCredentials.passwordHash).not.toBe("super-secret");
+    expect(savedCredentials.passwordHash.length).toBeGreaterThan(20);
+    expect(summary).toEqual({
+      username: "alice",
+      hasPassword: true,
+    });
+  });
+
+  it("preserves the existing password hash when only the username changes", async () => {
+    const { registerIpcHandlers } = await import("./handlers.js");
+    registerIpcHandlers();
+
+    mockState.getRemoteApiCredentialsMock.mockReturnValue({
+      username: "alice",
+      passwordHash: "stored-hash",
+    });
+
+    const handler = mockState.registeredHandlers.get(IPC_CHANNELS.remoteApiCredentials.update);
+    await handler?.({}, {
+      username: "alice-next",
+      password: "",
+    });
+
+    expect(mockState.setRemoteApiCredentialsMock).toHaveBeenCalledWith({
+      username: "alice-next",
+      passwordHash: "stored-hash",
+    });
+  });
+
+  it("deletes exited sessions through IPC", async () => {
+    const { registerIpcHandlers } = await import("./handlers.js");
+    registerIpcHandlers();
+
+    const handler = mockState.registeredHandlers.get(IPC_CHANNELS.sessions.delete);
+    await handler?.({}, "session-1");
+
+    expect(mockState.deleteSessionMock).toHaveBeenCalledWith("session-1");
+  });
+
+  it("suppresses expected logging when input is sent to an exited session", async () => {
+    const { registerIpcHandlers } = await import("./handlers.js");
+    registerIpcHandlers();
+
+    mockState.sendSessionMock.mockImplementation(() => {
+      throw new Error("Session session-1 is not running.");
+    });
+
+    const handler = mockState.registeredHandlers.get(IPC_CHANNELS.sessions.send);
+    await expect(handler?.({}, "session-1", "ls\n")).resolves.toBeUndefined();
+    expect(log.error).not.toHaveBeenCalled();
   });
 });

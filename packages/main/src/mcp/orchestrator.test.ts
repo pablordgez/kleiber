@@ -217,7 +217,7 @@ describe("McpOrchestrator", () => {
         projectId: "project-1",
         parentSessionId: "session-root",
         requestedYolo: true,
-        defaultYolo: true,
+        defaultYolo: false,
         workingDirectory: "/tmp/project-1/subdir",
         role: "architect",
       }),

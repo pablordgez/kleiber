@@ -1,6 +1,20 @@
-import type { Project, SessionRecord } from "@kleiber/shared";
+import type {
+  AgentCli,
+  Project,
+  RemoteApiSessionOptions,
+  SessionRecord,
+  SessionType,
+} from "@kleiber/shared";
 
 const API_BASE = ""; // Relative URLs for HTTP/HTTPS compatibility
+
+export interface CreateRemoteSessionRequest {
+  name: string;
+  type: SessionType;
+  cli?: AgentCli;
+  role?: string;
+  yolo?: boolean;
+}
 
 export class ApiClient {
   private static getToken(): string | null {
@@ -18,6 +32,7 @@ export class ApiClient {
   private static async request<T>(path: string, options: RequestInit = {}): Promise<T> {
     const token = this.getToken();
     const headers = new Headers(options.headers);
+    headers.set("Accept", "application/json");
     if (token) {
       headers.set("Authorization", `Bearer ${token}`);
     }
@@ -66,7 +81,11 @@ export class ApiClient {
     return this.request<SessionRecord[]>(`/projects/${projectId}/sessions`);
   }
 
-  static async createSession(projectId: string, data: any): Promise<SessionRecord> {
+  static async getSessionOptions(projectId: string): Promise<RemoteApiSessionOptions> {
+    return this.request<RemoteApiSessionOptions>(`/projects/${projectId}/session-options`);
+  }
+
+  static async createSession(projectId: string, data: CreateRemoteSessionRequest): Promise<SessionRecord> {
     return this.request<SessionRecord>(`/projects/${projectId}/sessions`, {
       method: "POST",
       body: JSON.stringify(data),
@@ -74,8 +93,21 @@ export class ApiClient {
   }
 
   static async killSession(projectId: string, sessionId: string): Promise<void> {
+    return this.request<void>(`/projects/${projectId}/sessions/${sessionId}/kill`, {
+      method: "POST",
+    });
+  }
+
+  static async deleteSession(projectId: string, sessionId: string): Promise<void> {
     return this.request<void>(`/projects/${projectId}/sessions/${sessionId}`, {
       method: "DELETE",
+    });
+  }
+
+  static async resizeSession(projectId: string, sessionId: string, columns: number, rows: number): Promise<void> {
+    return this.request<void>(`/projects/${projectId}/sessions/${sessionId}/resize`, {
+      method: "POST",
+      body: JSON.stringify({ columns, rows }),
     });
   }
 }

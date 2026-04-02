@@ -25,9 +25,14 @@ const NAV_ITEMS: NavItem[] = [
 interface SettingsPanelProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onSettingsChange?: (settings: AppSettings) => void;
 }
 
-export const SettingsPanel: React.FC<SettingsPanelProps> = ({ open, onOpenChange }) => {
+export const SettingsPanel: React.FC<SettingsPanelProps> = ({
+  open,
+  onOpenChange,
+  onSettingsChange,
+}) => {
   const [section, setSection] = useState<Section>('general');
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -54,16 +59,21 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ open, onOpenChange
 
   const handleUpdate = async (patch: Partial<AppSettings>) => {
     if (!settings) return;
-    const next = { ...settings, ...patch };
+    const previous = settings;
+    const next = { ...previous, ...patch };
     setSettings(next);
+    onSettingsChange?.(next);
     setIsSaving(true);
     setSaveError(null);
     try {
-      await window.kleiber.settings.update(patch);
+      const appliedSettings = await window.kleiber.settings.update(patch);
+      setSettings(appliedSettings);
+      onSettingsChange?.(appliedSettings);
     } catch (err: unknown) {
       setSaveError(err instanceof Error ? err.message : 'Failed to save settings');
       // Revert optimistic update
-      setSettings(settings);
+      setSettings(previous);
+      onSettingsChange?.(previous);
     } finally {
       setIsSaving(false);
     }
@@ -75,14 +85,16 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ open, onOpenChange
       return;
     }
     try {
-      // Reset to defaults by sending empty/default values
-      await window.kleiber.settings.update({
+      const resetSettings = await window.kleiber.settings.update({
         remoteApiEnabled: false,
         remoteApiPort: null,
         remoteApiBindAddress: '0.0.0.0',
         theme: 'dark',
         quickLaunchShortcut: '',
       });
+      await window.kleiber.remoteApiCredentials.clear();
+      setSettings(resetSettings);
+      onSettingsChange?.(resetSettings);
       setShowResetConfirm(false);
       onOpenChange(false);
     } catch (err: unknown) {

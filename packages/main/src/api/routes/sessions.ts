@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { SUPPORTED_AGENT_CLIS } from "@kleiber/shared";
 
+import { resolveHarnessAdapter } from "../../pack/harness-adapter";
 import type {
   RemoteApiCreateSessionPayload,
   RemoteApiCreateSessionResolver,
@@ -13,8 +14,11 @@ export async function registerSessionRoutes(
   app: FastifyInstance,
   options: {
     store: Pick<RemoteApiStore, "getProject">;
-    packManager: Pick<RemoteApiPackManager, "readProjectConfig">;
-    sessionManager: Pick<RemoteApiSessionManager, "createSession" | "listSessions">;
+    packManager: Pick<RemoteApiPackManager, "discoverBundledRoles" | "readProjectConfig">;
+    sessionManager: Pick<
+      RemoteApiSessionManager,
+      "createSession" | "deleteSession" | "getSession" | "killSession" | "listSessions" | "resizeSession"
+    >;
     createSessionResolver: RemoteApiCreateSessionResolver;
     mcpRuntime?: {
       wrapperCommand: string;
@@ -22,6 +26,46 @@ export async function registerSessionRoutes(
     };
   },
 ): Promise<void> {
+  app.get(
+    "/projects/:projectId/session-options",
+    {
+      schema: {
+        params: {
+          type: "object",
+          required: ["projectId"],
+          additionalProperties: false,
+          properties: {
+            projectId: { type: "string", minLength: 1 },
+          },
+        },
+      },
+    },
+    async (request, reply) => {
+      const { projectId } = request.params as { projectId: string };
+      const project = options.store.getProject(projectId);
+      if (!project) {
+        return reply.code(404).send({ error: `Project ${projectId} not found.` });
+      }
+
+      const packConfig = await options.packManager.readProjectConfig(project.directoryPath);
+      const availableHarnesses = packConfig
+        ? SUPPORTED_AGENT_CLIS.filter((cli) => {
+            try {
+              return resolveHarnessAdapter(packConfig, cli).enabled;
+            } catch {
+              return false;
+            }
+          })
+        : [...SUPPORTED_AGENT_CLIS];
+
+      const availableAgents = await options.packManager.discoverBundledRoles();
+      return {
+        availableHarnesses,
+        availableAgents,
+      };
+    },
+  );
+
   app.get(
     "/projects/:projectId/sessions",
     {
@@ -98,6 +142,112 @@ export async function registerSessionRoutes(
 
       const session = await options.sessionManager.createSession(createSessionInput);
       return reply.code(201).send(session);
+    },
+  );
+
+  app.post(
+    "/projects/:projectId/sessions/:sessionId/kill",
+    {
+      schema: {
+        params: {
+          type: "object",
+          required: ["projectId", "sessionId"],
+          additionalProperties: false,
+          properties: {
+            projectId: { type: "string", minLength: 1 },
+            sessionId: { type: "string", minLength: 1 },
+          },
+        },
+      },
+    },
+    async (request, reply) => {
+      const { projectId, sessionId } = request.params as { projectId: string; sessionId: string };
+      const project = options.store.getProject(projectId);
+      if (!project) {
+        return reply.code(404).send({ error: `Project ${projectId} not found.` });
+      }
+
+      const session = options.sessionManager.getSession(sessionId);
+      if (!session || session.projectId !== projectId) {
+        return reply.code(404).send({ error: `Session ${sessionId} not found.` });
+      }
+
+      options.sessionManager.killSession(sessionId);
+      return reply.code(204).send();
+    },
+  );
+
+  app.delete(
+    "/projects/:projectId/sessions/:sessionId",
+    {
+      schema: {
+        params: {
+          type: "object",
+          required: ["projectId", "sessionId"],
+          additionalProperties: false,
+          properties: {
+            projectId: { type: "string", minLength: 1 },
+            sessionId: { type: "string", minLength: 1 },
+          },
+        },
+      },
+    },
+    async (request, reply) => {
+      const { projectId, sessionId } = request.params as { projectId: string; sessionId: string };
+      const project = options.store.getProject(projectId);
+      if (!project) {
+        return reply.code(404).send({ error: `Project ${projectId} not found.` });
+      }
+
+      const session = options.sessionManager.getSession(sessionId);
+      if (!session || session.projectId !== projectId) {
+        return reply.code(404).send({ error: `Session ${sessionId} not found.` });
+      }
+
+      options.sessionManager.deleteSession(sessionId);
+      return reply.code(204).send();
+    },
+  );
+
+  app.post(
+    "/projects/:projectId/sessions/:sessionId/resize",
+    {
+      schema: {
+        params: {
+          type: "object",
+          required: ["projectId", "sessionId"],
+          additionalProperties: false,
+          properties: {
+            projectId: { type: "string", minLength: 1 },
+            sessionId: { type: "string", minLength: 1 },
+          },
+        },
+        body: {
+          type: "object",
+          required: ["columns", "rows"],
+          additionalProperties: false,
+          properties: {
+            columns: { type: "integer", minimum: 1 },
+            rows: { type: "integer", minimum: 1 },
+          },
+        },
+      },
+    },
+    async (request, reply) => {
+      const { projectId, sessionId } = request.params as { projectId: string; sessionId: string };
+      const project = options.store.getProject(projectId);
+      if (!project) {
+        return reply.code(404).send({ error: `Project ${projectId} not found.` });
+      }
+
+      const session = options.sessionManager.getSession(sessionId);
+      if (!session || session.projectId !== projectId) {
+        return reply.code(404).send({ error: `Session ${sessionId} not found.` });
+      }
+
+      const { columns, rows } = request.body as { columns: number; rows: number };
+      options.sessionManager.resizeSession(sessionId, { columns, rows });
+      return reply.code(204).send();
     },
   );
 }

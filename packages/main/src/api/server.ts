@@ -22,7 +22,7 @@ export interface RemoteApiServerState {
 
 export interface BuildRemoteApiAppOptions {
   store: Pick<RemoteApiStore, "getRemoteApiCredentials" | "listProjects" | "getProject">;
-  packManager: Pick<RemoteApiPackManager, "readProjectConfig">;
+  packManager: Pick<RemoteApiPackManager, "discoverBundledRoles" | "readProjectConfig">;
   sessionManager: RemoteApiSessionManager;
   createSessionResolver: RemoteApiCreateSessionResolver;
   mcpRuntime?: {
@@ -198,7 +198,7 @@ export async function buildRemoteApiApp(options: BuildRemoteApiAppOptions): Prom
 
 export class RemoteApiServerController {
   readonly #store: RemoteApiStore;
-  readonly #packManager: Pick<RemoteApiPackManager, "readProjectConfig">;
+  readonly #packManager: Pick<RemoteApiPackManager, "discoverBundledRoles" | "readProjectConfig">;
   readonly #sessionManager: RemoteApiSessionManager;
   readonly #createSessionResolver: RemoteApiCreateSessionResolver;
   readonly #mcpRuntime: {
@@ -212,7 +212,7 @@ export class RemoteApiServerController {
 
   constructor(options: {
     store: RemoteApiStore;
-    packManager: Pick<RemoteApiPackManager, "readProjectConfig">;
+    packManager: Pick<RemoteApiPackManager, "discoverBundledRoles" | "readProjectConfig">;
     sessionManager: RemoteApiSessionManager;
     createSessionResolver: RemoteApiCreateSessionResolver;
     mcpRuntime?: {

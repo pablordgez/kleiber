@@ -5,7 +5,7 @@ import { Folder } from "lucide-react";
 import { cn } from "../lib/utils";
 
 interface ProjectListProps {
-  onSelectProject: (projectId: string) => void;
+  onSelectProject: (project: Project) => void;
   selectedProjectId: string | null;
 }
 
@@ -48,7 +48,7 @@ export const ProjectList: React.FC<ProjectListProps> = ({ onSelectProject, selec
           projects.map((project) => (
             <button
               key={project.id}
-              onClick={() => onSelectProject(project.id)}
+              onClick={() => onSelectProject(project)}
               className={cn(
                 "flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-left transition-colors",
                 selectedProjectId === project.id

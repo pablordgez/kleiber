@@ -1,8 +1,14 @@
 import React, { useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import { Project } from '@kleiber/shared';
-import { X } from 'lucide-react';
+import { FolderOpen, X } from 'lucide-react';
 import { useAppStore } from '../../store/useAppStore';
+
+function basename(filePath: string): string {
+  const normalized = filePath.replace(/\/+$/, '');
+  const segments = normalized.split(/[\\/]/).filter(Boolean);
+  return segments.at(-1) ?? normalized;
+}
 
 export interface NewProjectDialogProps {
   open: boolean;
@@ -17,8 +23,8 @@ export const NewProjectDialog: React.FC<NewProjectDialogProps> = ({
 }) => {
   const [name, setName] = useState('');
   const [directoryPath, setDirectoryPath] = useState('');
-  const [yoloDefault, setYoloDefault] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isPickingDirectory, setIsPickingDirectory] = useState(false);
   const addProject = useAppStore((state) => state.addProject);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -27,18 +33,35 @@ export const NewProjectDialog: React.FC<NewProjectDialogProps> = ({
 
     setIsSubmitting(true);
     try {
-      const project = await window.kleiber.projects.create({ name, directoryPath, yoloDefault });
+      const project = await window.kleiber.projects.create({ name, directoryPath });
       addProject(project);
       onCreated?.(project);
       onOpenChange(false);
       setName('');
       setDirectoryPath('');
-      setYoloDefault(false);
     } catch (err) {
       console.error('Failed to create project', err);
       window.alert('Failed to create project: ' + (err instanceof Error ? err.message : err));
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const handlePickDirectory = async () => {
+    setIsPickingDirectory(true);
+    try {
+      const selectedPath = await window.kleiber.projects.pickDirectory();
+      if (!selectedPath) {
+        return;
+      }
+
+      setDirectoryPath(selectedPath);
+      setName((currentName) => currentName || basename(selectedPath));
+    } catch (err) {
+      console.error('Failed to pick project directory', err);
+      window.alert('Failed to pick project directory: ' + (err instanceof Error ? err.message : err));
+    } finally {
+      setIsPickingDirectory(false);
     }
   };
 
@@ -75,27 +98,28 @@ export const NewProjectDialog: React.FC<NewProjectDialogProps> = ({
               <label htmlFor="proj-directory" className="text-[13px] font-medium text-[#FFFFFF]">
                 Directory Path
               </label>
-              <input
-                id="proj-directory"
-                value={directoryPath}
-                onChange={(e) => setDirectoryPath(e.target.value)}
-                className="flex h-9 w-full rounded-lg border border-[#1C1C1C] bg-[#000000] px-3 py-2 text-sm text-[#FFFFFF] placeholder:text-[#444444] focus:outline-none focus:border-[#333333] transition-colors"
-                placeholder="/path/to/project"
-                required
-              />
-            </div>
-
-            <div className="flex items-center gap-2 mt-1">
-              <input
-                type="checkbox"
-                id="proj-yolo"
-                checked={yoloDefault}
-                onChange={(e) => setYoloDefault(e.target.checked)}
-                className="h-4 w-4 rounded border-[#1C1C1C] bg-[#000000] accent-white"
-              />
-              <label htmlFor="proj-yolo" className="text-[13px] font-medium text-[#FFFFFF]">
-                Enable YOLO mode by default
-              </label>
+              <div className="flex items-center gap-2">
+                <input
+                  id="proj-directory"
+                  value={directoryPath}
+                  onChange={(e) => setDirectoryPath(e.target.value)}
+                  className="flex h-9 w-full rounded-lg border border-[#1C1C1C] bg-[#000000] px-3 py-2 text-sm text-[#FFFFFF] placeholder:text-[#444444] focus:outline-none focus:border-[#333333] transition-colors"
+                  placeholder="/absolute/path/to/project"
+                  required
+                />
+                <button
+                  type="button"
+                  onClick={() => void handlePickDirectory()}
+                  disabled={isSubmitting || isPickingDirectory}
+                  className="inline-flex h-9 shrink-0 items-center gap-2 rounded-lg border border-[#1C1C1C] bg-[#141414] px-3 text-sm font-medium text-[#FFFFFF] transition-colors hover:bg-[#1A1A1A] disabled:opacity-40"
+                >
+                  <FolderOpen size={14} />
+                  {isPickingDirectory ? 'Browsing…' : 'Browse'}
+                </button>
+              </div>
+              <p className="text-xs text-[#666666]">
+                Choose a directory from the native folder picker or paste an absolute path.
+              </p>
             </div>
 
             <div className="flex justify-end gap-2 mt-3 pt-3 border-t border-[#1C1C1C]">

@@ -1,4 +1,6 @@
+import { appendFileSync, mkdirSync } from "node:fs";
 import net from "node:net";
+import path from "node:path";
 import { stdin, stdout } from "node:process";
 
 import { MCP_TOOL_DEFINITIONS, MCP_PROTOCOL_VERSION, type JsonSchema } from "./schemas";
@@ -59,6 +61,7 @@ export interface ParentToWrapperResponse {
 interface ParentBridge {
   send: (message: WrapperToParentRequest) => boolean | void;
   onMessage: (listener: (message: unknown) => void) => () => void;
+  onError: (listener: (error: Error) => void) => () => void;
 }
 
 interface WrapperStreams {
@@ -79,6 +82,10 @@ interface PendingParentRequest {
   timeout: NodeJS.Timeout;
 }
 
+type StdioTransportMode = "frame" | "jsonl";
+type JsonPrimitive = string | number | boolean | null;
+type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
+
 const JSON_RPC_VERSION = "2.0";
 const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
 
@@ -98,8 +105,16 @@ function isObject(value: unknown): value is Record<string, unknown> {
 }
 
 function resolveContext(context?: Partial<WrapperContext>): WrapperContext {
-  const sessionId = context?.sessionId ?? process.env.KLEIBER_SESSION_ID ?? "unknown-session";
-  const projectId = context?.projectId ?? process.env.KLEIBER_PROJECT_ID ?? "unknown-project";
+  const sessionId =
+    context?.sessionId ??
+    process.env.KLEIBER_SESSION_ID ??
+    process.env.KLEIBER_MCP_SESSION_ID ??
+    "unknown-session";
+  const projectId =
+    context?.projectId ??
+    process.env.KLEIBER_PROJECT_ID ??
+    process.env.KLEIBER_MCP_PROJECT_ID ??
+    "unknown-project";
   return { sessionId, projectId };
 }
 
@@ -120,22 +135,38 @@ function createProcessBridge(): ParentBridge {
         process.off("message", wrapped);
       };
     },
+    onError: () => () => {},
   };
 }
 
 function createSocketBridge(socketPath: string): ParentBridge {
   const socket = net.createConnection(socketPath);
   const listeners = new Set<(message: unknown) => void>();
+  const errorListeners = new Set<(error: Error) => void>();
   const queue: string[] = [];
   let connected = false;
+  let lastError: Error | null = null;
   let buffer = "";
 
+  const emitError = (error: Error): void => {
+    lastError = error;
+    for (const listener of errorListeners) {
+      listener(error);
+    }
+  };
+
   socket.setEncoding("utf8");
+  socket.setNoDelay(true);
+  socket.setTimeout(5_000);
   socket.on("connect", () => {
     connected = true;
+    socket.setTimeout(0);
     for (const payload of queue.splice(0)) {
       socket.write(payload);
     }
+  });
+  socket.on("timeout", () => {
+    socket.destroy(new Error(`Timed out connecting to Kleiber MCP socket at ${socketPath}`));
   });
   socket.on("data", (chunk) => {
     buffer += String(chunk);
@@ -161,9 +192,20 @@ function createSocketBridge(socketPath: string): ParentBridge {
       }
     }
   });
+  socket.on("error", (error) => {
+    emitError(error instanceof Error ? error : new Error(String(error)));
+  });
+  socket.on("close", () => {
+    if (!connected && !lastError) {
+      emitError(new Error(`Kleiber MCP socket closed before connect: ${socketPath}`));
+    }
+  });
 
   return {
     send: (message) => {
+      if (lastError) {
+        return false;
+      }
       const payload = `${JSON.stringify(message)}\n`;
       if (connected) {
         socket.write(payload);
@@ -182,6 +224,15 @@ function createSocketBridge(socketPath: string): ParentBridge {
         }
       };
     },
+    onError: (listener) => {
+      errorListeners.add(listener);
+      if (lastError) {
+        listener(lastError);
+      }
+      return () => {
+        errorListeners.delete(listener);
+      };
+    },
   };
 }
 
@@ -198,6 +249,7 @@ function createDefaultBridge(): ParentBridge {
   return {
     send: () => false,
     onMessage: () => () => {},
+    onError: () => () => {},
   };
 }
 
@@ -212,8 +264,11 @@ export class McpStdioWrapper {
   #stdinBuffer: Buffer<ArrayBufferLike> = Buffer.alloc(0);
   #started = false;
   #teardownParentListener: (() => void) | null = null;
+  #teardownBridgeErrorListener: (() => void) | null = null;
   #orchestratorVersion: unknown;
   #orchestratorCapabilities: unknown;
+  #debugLogPath = process.env.KLEIBER_MCP_DEBUG_LOG_PATH ?? null;
+  #stdioTransportMode: StdioTransportMode = "frame";
 
   constructor(options: McpStdioWrapperOptions = {}) {
     this.#bridge = options.bridge ?? createDefaultBridge();
@@ -227,11 +282,20 @@ export class McpStdioWrapper {
       return;
     }
 
+    this.#debug("wrapper.start", this.#context);
     this.#started = true;
     this.#teardownParentListener = this.#bridge.onMessage((message) => {
       this.#handleParentMessage(message);
     });
+    this.#teardownBridgeErrorListener =
+      this.#bridge.onError?.((error) => {
+        this.#debug("bridge.error", { message: error.message });
+        this.#handleBridgeError(error);
+      }) ?? null;
     this.#streams.input.on("data", this.#onInputData);
+    if ("resume" in this.#streams.input && typeof this.#streams.input.resume === "function") {
+      this.#streams.input.resume();
+    }
   }
 
   stop(): void {
@@ -241,8 +305,13 @@ export class McpStdioWrapper {
 
     this.#started = false;
     this.#streams.input.off("data", this.#onInputData);
+    if ("pause" in this.#streams.input && typeof this.#streams.input.pause === "function") {
+      this.#streams.input.pause();
+    }
     this.#teardownParentListener?.();
     this.#teardownParentListener = null;
+    this.#teardownBridgeErrorListener?.();
+    this.#teardownBridgeErrorListener = null;
 
     for (const pending of this.#pending.values()) {
       clearTimeout(pending.timeout);
@@ -255,21 +324,40 @@ export class McpStdioWrapper {
 
   readonly #onInputData = (chunk: Buffer | string): void => {
     const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, "utf8");
+    this.#debug("stdio.chunk.in", {
+      bytes: bytes.length,
+      preview: bytes.toString("utf8", 0, Math.min(bytes.length, 120)),
+    });
     this.#stdinBuffer = Buffer.concat([this.#stdinBuffer, bytes]);
 
     while (true) {
-      const parsed = this.#tryReadFrame(this.#stdinBuffer);
+      const parsed = this.#tryReadMessage(this.#stdinBuffer);
       if (!parsed) {
         return;
       }
 
       this.#stdinBuffer = parsed.remaining;
+      this.#stdioTransportMode = parsed.transport;
+      this.#debug("stdio.frame.in", { bytes: parsed.payload.length });
       void this.#handleIncomingFrame(parsed.payload);
     }
   };
 
-  #tryReadFrame(buffer: Buffer<ArrayBufferLike>): { payload: string; remaining: Buffer<ArrayBufferLike> } | null {
-    const headerEndIndex = buffer.indexOf("\r\n\r\n");
+  #tryReadMessage(
+    buffer: Buffer<ArrayBufferLike>,
+  ): { payload: string; remaining: Buffer<ArrayBufferLike>; transport: StdioTransportMode } | null {
+    const jsonLineMessage = this.#tryReadJsonLine(buffer);
+    if (jsonLineMessage) {
+      return jsonLineMessage;
+    }
+
+    return this.#tryReadFrame(buffer);
+  }
+
+  #tryReadFrame(
+    buffer: Buffer<ArrayBufferLike>,
+  ): { payload: string; remaining: Buffer<ArrayBufferLike>; transport: StdioTransportMode } | null {
+    const { headerEndIndex, separatorLength } = this.#findHeaderBoundary(buffer);
     if (headerEndIndex === -1) {
       return null;
     }
@@ -285,10 +373,10 @@ export class McpStdioWrapper {
           message: "Invalid Content-Length header.",
         },
       });
-      return { payload: "", remaining: Buffer.from([]) };
+      return { payload: "", remaining: Buffer.from([]), transport: "frame" };
     }
 
-    const bodyStartIndex = headerEndIndex + 4;
+    const bodyStartIndex = headerEndIndex + separatorLength;
     const bodyEndIndex = bodyStartIndex + contentLength;
     if (buffer.length < bodyEndIndex) {
       return null;
@@ -297,7 +385,56 @@ export class McpStdioWrapper {
     return {
       payload: buffer.subarray(bodyStartIndex, bodyEndIndex).toString("utf8"),
       remaining: Buffer.from(buffer.subarray(bodyEndIndex)),
+      transport: "frame",
     };
+  }
+
+  #tryReadJsonLine(
+    buffer: Buffer<ArrayBufferLike>,
+  ): { payload: string; remaining: Buffer<ArrayBufferLike>; transport: StdioTransportMode } | null {
+    const newlineIndex = buffer.indexOf("\n");
+    if (newlineIndex === -1) {
+      return null;
+    }
+
+    const line = buffer.subarray(0, newlineIndex).toString("utf8").trim();
+    if (!line.startsWith("{") && !line.startsWith("[")) {
+      return null;
+    }
+
+    try {
+      JSON.parse(line);
+    } catch {
+      return null;
+    }
+
+    return {
+      payload: line,
+      remaining: Buffer.from(buffer.subarray(newlineIndex + 1)),
+      transport: "jsonl",
+    };
+  }
+
+  #findHeaderBoundary(buffer: Buffer<ArrayBufferLike>): {
+    headerEndIndex: number;
+    separatorLength: number;
+  } {
+    const crlfBoundary = buffer.indexOf("\r\n\r\n");
+    const lfBoundary = buffer.indexOf("\n\n");
+
+    if (crlfBoundary === -1 && lfBoundary === -1) {
+      return { headerEndIndex: -1, separatorLength: 0 };
+    }
+
+    if (crlfBoundary === -1) {
+      return { headerEndIndex: lfBoundary, separatorLength: 2 };
+    }
+
+    if (lfBoundary === -1 || crlfBoundary <= lfBoundary) {
+      return { headerEndIndex: crlfBoundary, separatorLength: 4 };
+    }
+
+    return { headerEndIndex: lfBoundary, separatorLength: 2 };
   }
 
   #readContentLength(headerText: string): number {
@@ -380,10 +517,12 @@ export class McpStdioWrapper {
   async #dispatchRequest(request: JsonRpcRequest): Promise<unknown> {
     switch (request.method) {
       case "initialize": {
+        this.#debug("rpc.initialize");
         const payload = await this.#proxyToParent("initialize", request.params ?? {});
         return this.#normalizeInitializeResult(payload);
       }
       case "tools/list": {
+        this.#debug("rpc.tools.list");
         const payload = await this.#proxyToParent("tools/list", request.params ?? {});
         return this.#normalizeToolsListResult(payload);
       }
@@ -391,7 +530,9 @@ export class McpStdioWrapper {
         if (!isObject(request.params) || typeof request.params.name !== "string") {
           throw new RpcError(-32602, "tools/call params must include a string name.");
         }
-        return this.#proxyToParent("tools/call", request.params);
+        this.#debug("rpc.tools.call", { name: request.params.name });
+        const payload = await this.#proxyToParent("tools/call", request.params);
+        return this.#normalizeToolCallResult(request.params.name, payload);
       }
       default:
         throw new RpcError(-32601, `Method not found: ${request.method}`);
@@ -450,6 +591,42 @@ export class McpStdioWrapper {
     return normalized;
   }
 
+  #normalizeToolCallResult(toolName: string, payload: unknown): Record<string, unknown> {
+    if (isToolResultEnvelope(payload)) {
+      return payload;
+    }
+
+    const summary =
+      toolName === "spawn_session"
+        ? "Session created."
+        : toolName === "send_to_session"
+          ? "Input sent to session."
+          : toolName === "read_session"
+            ? "Session output read."
+            : toolName === "list_sessions"
+              ? "Sessions listed."
+              : toolName === "kill_session"
+                ? "Session terminated."
+                : `${toolName} completed.`;
+
+    const normalized: Record<string, unknown> = {
+      content: [
+        {
+          type: "text",
+          text: summary,
+        },
+      ],
+      isError: false,
+    };
+
+    const structuredContent = toStructuredContent(payload);
+    if (structuredContent !== undefined) {
+      normalized.structuredContent = structuredContent;
+    }
+
+    return normalized;
+  }
+
   #proxyToParent(method: RpcMethod, params: unknown): Promise<unknown> {
     const requestId = `req-${Date.now()}-${this.#nextRequestId}`;
     this.#nextRequestId += 1;
@@ -457,11 +634,13 @@ export class McpStdioWrapper {
     return new Promise<unknown>((resolve, reject) => {
       const timeout = setTimeout(() => {
         this.#pending.delete(requestId);
+        this.#debug("parent.timeout", { method, requestId });
         reject(new RpcError(-32603, `Timed out waiting for parent response to ${method}.`));
       }, this.#requestTimeoutMs);
 
       this.#pending.set(requestId, { resolve, reject, timeout });
       try {
+        this.#debug("parent.send", { method, requestId });
         const sent = this.#bridge.send({
           kind: "kleiber.mcp.request",
           requestId,
@@ -472,6 +651,7 @@ export class McpStdioWrapper {
         if (sent === false) {
           clearTimeout(timeout);
           this.#pending.delete(requestId);
+          this.#debug("parent.send.failed", { method, requestId });
           reject(new RpcError(-32603, "Parent IPC channel is unavailable."));
         }
       } catch (error) {
@@ -501,6 +681,10 @@ export class McpStdioWrapper {
       return;
     }
 
+    this.#debug("parent.response", {
+      requestId: response.requestId,
+      ok: response.ok,
+    });
     clearTimeout(pending.timeout);
     this.#pending.delete(response.requestId);
 
@@ -516,6 +700,19 @@ export class McpStdioWrapper {
         response.error?.data,
       ),
     );
+  }
+
+  #handleBridgeError(error: Error): void {
+    for (const [requestId, pending] of this.#pending.entries()) {
+      clearTimeout(pending.timeout);
+      pending.reject(
+        new RpcError(-32603, `Kleiber MCP bridge error: ${error.message}`, {
+          requestId,
+        }),
+      );
+    }
+
+    this.#pending.clear();
   }
 
   #sendRpcSuccess(id: JsonRpcId, result: unknown): void {
@@ -540,8 +737,67 @@ export class McpStdioWrapper {
 
   #writeJsonRpc(message: JsonRpcResponse): void {
     const payload = JSON.stringify(message);
+    this.#debug("stdio.frame.out", {
+      id: message.id,
+      hasError: "error" in message,
+      transport: this.#stdioTransportMode,
+    });
+    if (this.#stdioTransportMode === "jsonl") {
+      this.#streams.output.write(`${payload}\n`);
+      return;
+    }
     this.#streams.output.write(`Content-Length: ${Buffer.byteLength(payload, "utf8")}\r\n\r\n${payload}`);
   }
+
+  #debug(event: string, details?: unknown): void {
+    if (!this.#debugLogPath) {
+      return;
+    }
+
+    try {
+      mkdirSync(path.dirname(this.#debugLogPath), { recursive: true });
+      appendFileSync(
+        this.#debugLogPath,
+        `${new Date().toISOString()} ${event}${details !== undefined ? ` ${JSON.stringify(details)}` : ""}\n`,
+        "utf8",
+      );
+    } catch {
+      // Logging must never break the wrapper protocol path.
+    }
+  }
+}
+
+function isToolResultEnvelope(value: unknown): value is Record<string, unknown> {
+  return (
+    isObject(value) &&
+    (Array.isArray(value.content) ||
+      "structuredContent" in value ||
+      typeof value.isError === "boolean")
+  );
+}
+
+function toStructuredContent(value: unknown): JsonValue | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === null || typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    const normalizedItems = value
+      .map((item) => toStructuredContent(item))
+      .filter((item): item is JsonValue => item !== undefined);
+    return normalizedItems;
+  }
+  if (isObject(value)) {
+    const normalizedEntries = Object.entries(value)
+      .map(([key, entry]) => [key, toStructuredContent(entry)] as const)
+      .filter((entry): entry is readonly [string, JsonValue] => entry[1] !== undefined);
+    return Object.fromEntries(normalizedEntries);
+  }
+  return {
+    value: String(value),
+  };
 }
 
 export function runMcpStdioWrapper(options: McpStdioWrapperOptions = {}): McpStdioWrapper {

@@ -12,7 +12,7 @@ export interface SidebarItemProps {
   isExpanded: boolean;
   hasChildren: boolean;
   statusState: SessionState | null;
-  yolo: boolean;
+  yolo?: boolean;
   onToggle: () => void;
   onSelect: () => void;
   contextMenuItems: Array<{ label: string; onClick: () => void; destructive?: boolean }>;
@@ -39,7 +39,7 @@ export const SidebarItem: React.FC<SidebarItemProps> = ({
   isExpanded,
   hasChildren,
   statusState,
-  yolo,
+  yolo = false,
   onToggle,
   onSelect,
   contextMenuItems,

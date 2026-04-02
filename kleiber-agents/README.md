@@ -176,3 +176,9 @@ To add more agents later:
 3. update `install.sh`
 
 That keeps the pack portable.
+
+## License
+
+`kleiber-agents` is distributed as part of the Kleiber repository and follows the repository
+license at [`../LICENSE`](../LICENSE). See [`../COMMERCIAL_LICENSE.md`](../COMMERCIAL_LICENSE.md)
+for the plain-English commercial-use summary.

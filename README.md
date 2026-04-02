@@ -298,3 +298,17 @@ These are discovered from the bundled `kleiber-agents` skill tree and surfaced i
 - [`kleiber-agents/README.md`](./kleiber-agents/README.md): bundled role pack, installers, wrapper layout, and output artifacts
 - [`.agent_specs/kleiber_2_requirements_final.md`](./.agent_specs/kleiber_2_requirements_final.md): current release requirements
 - [`.agent_specs/kleiber_1_architecture.yaml`](./.agent_specs/kleiber_1_architecture.yaml): implementation architecture
+- [`COMMERCIAL_LICENSE.md`](./COMMERCIAL_LICENSE.md): plain-English summary of when a separate commercial license is required
+- [`CONTRIBUTING.md`](./CONTRIBUTING.md): inbound contribution terms for this licensing model
+
+## License
+
+Kleiber is source-available under [`BUSL-1.1`](./LICENSE).
+
+In practical terms, you can use, modify, and run it for personal work, internal business
+operations, consulting, client services, education, research, and integrations without a
+separate agreement, as long as you are not monetizing Kleiber itself.
+
+If you want to sell Kleiber, offer it as a hosted or managed service, white-label or OEM
+it, or ship a paid product whose primary value substantially comes from Kleiber, you need
+a separate commercial license. See [`COMMERCIAL_LICENSE.md`](./COMMERCIAL_LICENSE.md).

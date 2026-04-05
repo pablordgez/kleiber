@@ -1,8 +1,8 @@
 import { accessSync, constants as fsConstants } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
-import { ipcMain, BrowserWindow, dialog } from "electron";
-import { BUNDLED_PACK_DISPLAY_NAME, IPC_CHANNELS, SUPPORTED_AGENT_CLIS } from "@kleiber/shared";
+import { app, ipcMain, BrowserWindow, dialog } from "electron";
+import { BUNDLED_PACK_DISPLAY_NAME, IPC_CHANNELS, PRIMARY_BUNDLED_PACK_DIR, SUPPORTED_AGENT_CLIS } from "@kleiber/shared";
 import log from "electron-log";
 import type {
   AgentCli,
@@ -27,7 +27,9 @@ import { notifySessionExitIfUnfocused } from "../notifications";
 import { PersistenceStore } from "../store";
 
 const store = new PersistenceStore();
-const agentPackManager = new AgentPackManager();
+const agentPackManager = new AgentPackManager(
+  app.isPackaged ? { packRoot: path.join(process.resourcesPath, PRIMARY_BUNDLED_PACK_DIR) } : undefined,
+);
 
 const DEFAULT_PACK_CONFIG: AgentPackConfig = {
   version: 1,

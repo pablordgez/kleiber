@@ -136,6 +136,8 @@ jobs:
 
       - name: Build distributables
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: corepack pnpm run ${{ matrix.build_script }}
 
       - name: Upload packaged artifacts

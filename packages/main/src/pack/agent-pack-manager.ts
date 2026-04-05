@@ -137,6 +137,7 @@ export class AgentPackManager {
       const child = this.#spawnRunner(invocation.command, invocation.args, {
         cwd: this.#packRoot,
         stdio: ["ignore", "pipe", "pipe"],
+        shell: process.platform === "win32",
       });
 
       let stdout = "";

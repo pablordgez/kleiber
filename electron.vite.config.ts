@@ -5,7 +5,7 @@ import tailwindcss from "@tailwindcss/vite";
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin()],
+    plugins: [externalizeDepsPlugin({ exclude: ["electron-store"] })],
     resolve: {
       alias: {
         "@kleiber/shared": path.resolve(__dirname, "packages/shared/src"),

@@ -1,6 +1,7 @@
 import { safeStorage } from "electron";
 import type { AppSettings, Project, RemoteApiCredentials } from "@kleiber/shared";
 import { DEFAULT_THEME } from "@kleiber/shared";
+import Store from "electron-store";
 
 import { decryptCredentials, encryptCredentials, type SafeStorageAdapter } from "./credentials";
 
@@ -69,14 +70,8 @@ const STORE_SCHEMA: Record<string, unknown> = {
   [STORE_KEYS.remoteApiCredentials]: { anyOf: [{ type: "string" }, { type: "null" }], default: null },
 };
 
-function loadStoreConstructor(): StoreConstructor {
-  const loaded = require("electron-store") as { default?: StoreConstructor };
-  return loaded.default ?? (loaded as unknown as StoreConstructor);
-}
-
 function createDefaultStore(storeName: string, schemaVersion: number): StoreShape {
-  const Store = loadStoreConstructor();
-  return new Store({
+  return new (Store as unknown as StoreConstructor)({
     name: storeName,
     clearInvalidConfig: true,
     schema: STORE_SCHEMA,

@@ -1,7 +1,0 @@
-name = "architect"
-description = "Review the requirements and recommend a fit-for-purpose architecture and tech stack. Present the primary recommendation plus credible alternatives, confirm alignment with the user, and after agreement write the architecture specification as YAML to .agent_specs/{project_name}_{x}_architecture.yaml."
-model = "gpt-5.4"
-model_reasoning_effort = "high"
-sandbox_mode = "workspace-write"
-
-developer_instructions = "Recommend an architecture and stack with rationale, alternatives, risks, and migration notes. Get user buy-in before saving the final YAML spec. Prefer using the shared architect skill if available; otherwise follow the same workflow directly."

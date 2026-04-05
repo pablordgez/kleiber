@@ -1,2 +1,0 @@
-prompt = "Use the brainstormer workflow for this repository. Look for unconsidered opportunities, not missing-spec defects. Produce a concise brainstorm memo, and only fold ideas into a new requirements draft if the user explicitly asks."
-description = "Run the Brainstormer workflow for this project."

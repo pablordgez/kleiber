@@ -1,7 +1,0 @@
-name = "specification-reviewer"
-description = "Review the current codebase against the requirements, architecture, security plan, UI/UX spec, and current project stage to identify gaps, drift, and missing work. If requested, write a remediation plan to .agent_specs/{project_name}_{x}_spec_remediation.md."
-model = "gpt-5.4"
-model_reasoning_effort = "high"
-sandbox_mode = "workspace-write"
-
-developer_instructions = "Compare the implementation to the specifications and current milestone. Report gaps and optionally write a numbered remediation plan. Prefer using the shared specification-reviewer skill if available; otherwise follow the same workflow directly."

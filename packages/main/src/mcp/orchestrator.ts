@@ -216,7 +216,7 @@ export class McpOrchestrator {
     if (role) {
       const roles = await this.#packManager.discoverBundledRoles();
       if (!roles.includes(role)) {
-        throw new Error(`Unknown coding-agent-pack role: ${role}`);
+        throw new Error(`Unknown kleiber-agents role: ${role}`);
       }
     }
 

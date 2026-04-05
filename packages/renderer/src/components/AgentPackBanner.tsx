@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { BUNDLED_PACK_DISPLAY_NAME } from '@kleiber/shared';
 
 interface PackStatus {
   installed: boolean;
@@ -20,8 +21,8 @@ export const AgentPackBanner: React.FC = () => {
       setStatus(nextStatus);
       setError(null);
     } catch (loadError) {
-      console.error('Failed to load agent pack status', loadError);
-      setError(loadError instanceof Error ? loadError.message : 'Failed to load agent pack status');
+      console.error('Failed to load pack status', loadError);
+      setError(loadError instanceof Error ? loadError.message : 'Failed to load pack status');
     } finally {
       setIsLoading(false);
     }
@@ -39,8 +40,12 @@ export const AgentPackBanner: React.FC = () => {
       await window.kleiber.pack.install();
       await loadStatus();
     } catch (installError) {
-      console.error('Failed to install agent pack globally', installError);
-      setError(installError instanceof Error ? installError.message : 'Failed to install agent pack globally');
+      console.error(`Failed to install ${BUNDLED_PACK_DISPLAY_NAME} globally`, installError);
+      setError(
+        installError instanceof Error
+          ? installError.message
+          : `Failed to install ${BUNDLED_PACK_DISPLAY_NAME} globally`,
+      );
     } finally {
       setIsInstalling(false);
     }
@@ -54,7 +59,9 @@ export const AgentPackBanner: React.FC = () => {
     <div className="border-b border-[#1C1C1C] bg-[#0A0A0A] px-4 py-3">
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div className="min-w-0">
-          <p className="text-sm font-medium text-[#FFFFFF]">coding-agent-pack is not installed globally</p>
+          <p className="text-sm font-medium text-[#FFFFFF]">
+            {BUNDLED_PACK_DISPLAY_NAME} is not installed globally
+          </p>
           <p className="mt-1 text-xs text-[#666666]">
             Global roles and orchestration helpers stay limited until the pack is installed system-wide.
           </p>

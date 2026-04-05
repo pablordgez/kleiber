@@ -1,9 +1,15 @@
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { access, readFile, readdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { GLOBAL_PACK_DETECTION_SKILL, type AgentPackConfig } from "@kleiber/shared";
+import {
+  GLOBAL_PACK_DETECTION_SKILL,
+  LEGACY_BUNDLED_PACK_DIR,
+  PRIMARY_BUNDLED_PACK_DIR,
+  type AgentPackConfig,
+} from "@kleiber/shared";
 
 import { parseAgentPackConfigYaml } from "./agent-pack-config";
 
@@ -50,7 +56,7 @@ export class AgentPackManager {
   constructor(options: AgentPackManagerOptions = {}) {
     this.#cwd = options.cwd ?? process.cwd();
     this.#homeDir = options.homeDir ?? os.homedir();
-    this.#packRoot = options.packRoot ?? path.resolve(this.#cwd, "coding-agent-pack");
+    this.#packRoot = options.packRoot ?? resolveDefaultPackRoot(this.#cwd);
     this.#spawnRunner = options.spawnRunner ?? spawn;
   }
 
@@ -182,4 +188,13 @@ export class AgentPackManager {
 
     return { command: "bash", args };
   }
+}
+
+function resolveDefaultPackRoot(cwd: string): string {
+  const primaryPackRoot = path.resolve(cwd, PRIMARY_BUNDLED_PACK_DIR);
+  if (existsSync(primaryPackRoot)) {
+    return primaryPackRoot;
+  }
+
+  return path.resolve(cwd, LEGACY_BUNDLED_PACK_DIR);
 }

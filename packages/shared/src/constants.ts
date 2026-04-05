@@ -8,6 +8,9 @@ export const DEFAULT_REMOTE_API_START_PORT = 9100;
 export const DEFAULT_THEME = "dark" as const;
 export const DEFAULT_OUTPUT_BUFFER_SIZE = 1000;
 export const GLOBAL_PACK_DETECTION_SKILL = "requirements-engineer";
+export const PRIMARY_BUNDLED_PACK_DIR = "kleiber-agents";
+export const LEGACY_BUNDLED_PACK_DIR = "coding-agent-pack";
+export const BUNDLED_PACK_DISPLAY_NAME = PRIMARY_BUNDLED_PACK_DIR;
 
 export const SUPPORTED_AGENT_CLIS = ["claude", "codex", "opencode", "gemini"] as const;
 export const HARNESS_NAMES = ["claude_code", "codex", "opencode", "gemini_cli"] as const;

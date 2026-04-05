@@ -1,7 +1,0 @@
-name = "requirements-refiner"
-description = "Review requirements drafts for ambiguity, inconsistency, underspecification, missing constraints, and unresolved acceptance criteria. Ask the user only the questions that require human decisions, then write the refined specification to .agent_specs/{project_name}_{x}_requirements_final.md."
-model = "gpt-5.4"
-model_reasoning_effort = "high"
-sandbox_mode = "workspace-write"
-
-developer_instructions = "Audit the requirements draft, ask only gap-closing questions that truly need user input, and produce the next numbered requirements_final file. Prefer using the shared requirements-refiner skill if available; otherwise follow the same workflow directly."

@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { RefreshCw, AlertTriangle } from 'lucide-react';
+import { BUNDLED_PACK_DISPLAY_NAME } from '@kleiber/shared';
 
 interface PackStatus {
   installed: boolean;
@@ -56,7 +57,7 @@ export const PackSettings: React.FC<PackSettingsProps> = ({ onRequestResetApp })
       <div>
         <h2 className="text-base font-semibold text-[#FFFFFF] mb-1">Pack &amp; Updates</h2>
         <p className="text-sm text-[#666666]">
-          Manage the coding-agent-pack that provides roles, harness adapters, and orchestration.
+          Manage {BUNDLED_PACK_DISPLAY_NAME}, which provides roles, harness adapters, and orchestration.
         </p>
       </div>
 
@@ -64,7 +65,7 @@ export const PackSettings: React.FC<PackSettingsProps> = ({ onRequestResetApp })
       <div className="flex flex-col gap-3 border border-[#1C1C1C] rounded-lg p-4 bg-[#0A0A0A]">
         <div className="flex items-center justify-between">
           <div>
-            <p className="text-[13px] font-medium text-[#FFFFFF]">coding-agent-pack</p>
+            <p className="text-[13px] font-medium text-[#FFFFFF]">{BUNDLED_PACK_DISPLAY_NAME}</p>
             {isLoading ? (
               <p className="text-xs text-[#666666] mt-0.5">Checking status…</p>
             ) : status?.globallyInstalled ? (
@@ -90,7 +91,7 @@ export const PackSettings: React.FC<PackSettingsProps> = ({ onRequestResetApp })
         </div>
 
         {installSuccess && (
-          <p className="text-xs text-[#22C55E]">Pack installed successfully.</p>
+          <p className="text-xs text-[#22C55E]">{BUNDLED_PACK_DISPLAY_NAME} installed successfully.</p>
         )}
         {error && <p className="text-xs text-[#EF4444]">{error}</p>}
         {status?.projectConfigError && (

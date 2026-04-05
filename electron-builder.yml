@@ -13,8 +13,8 @@ files:
 
 # Extra resources copied outside the asar (accessible at runtime via process.resourcesPath)
 extraResources:
-  - from: coding-agent-pack
-    to: coding-agent-pack
+  - from: kleiber-agents
+    to: kleiber-agents
   - from: dist/web
     to: web
     filter:
@@ -27,6 +27,8 @@ npmRebuild: false
 # Linux
 # ──────────────────────────────────────────────
 linux:
+  maintainer: Kleiber Maintainers
+  vendor: Kleiber
   target:
     - target: AppImage
       arch:
@@ -68,7 +70,5 @@ win:
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
-  installerIcon: build/icon.ico
-  uninstallerIcon: build/icon.ico
   createDesktopShortcut: true
   createStartMenuShortcut: true

@@ -1,2 +1,0 @@
-prompt = "Use the requirements-refiner workflow for this repository. Audit the requirements draft, ask only gap-closing questions that truly need user input, and produce the next numbered requirements_final file."
-description = "Run the Requirements Refiner workflow for this project."

@@ -322,7 +322,7 @@ describe("McpOrchestrator", () => {
         },
         { sessionId: "session-root", projectId: "project-1" },
       ),
-    ).rejects.toThrow(/Unknown coding-agent-pack role/);
+    ).rejects.toThrow(/Unknown kleiber-agents role/);
   });
 
   it("enforces active-session limits without counting exited sessions", async () => {

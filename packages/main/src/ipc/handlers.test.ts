@@ -386,7 +386,9 @@ describe("IPC handlers remediation", () => {
     expect(createInput.launch.command).toBe("codex");
     expect(createInput.launch.args).toEqual([]);
     expect(createInput.launch.env).toEqual({ KLEIBER_AGENT_ROLE: "architect" });
-    expect(createInput.launch.prompt).toContain("Use the architect agent workflow");
+    expect(createInput.launch.prompt).toContain("architect role from kleiber-agents");
+    expect(createInput.launch.prompt).toContain("Kleiber session orchestration may be available");
+    expect(createInput.launch.prompt).toContain(".agents/skills/project-spec-utils/references/kleiber-ecosystem.md");
     expect(createInput.launch.prompt).toContain(".codex/agents/architect.toml");
   });
 

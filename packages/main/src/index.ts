@@ -1,5 +1,6 @@
 import path from "node:path";
 import { app, BrowserWindow, Menu, session as electronSession } from "electron";
+import { getNonMacShortcutChannel } from "./shortcuts";
 import { configureMainLogging, startSecurityEventLogging } from "./logging";
 import { registerIpcHandlers } from "./ipc/handlers";
 import { IPC_CHANNELS } from "@kleiber/shared";
@@ -60,6 +61,13 @@ function createWindow(): void {
   // Deny all new window creation (blocks window.open abuse)
   window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
 
+  window.webContents.on("before-input-event", (event, input) => {
+    const shortcutChannel = getNonMacShortcutChannel(input);
+    if (!shortcutChannel) return;
+    event.preventDefault();
+    window.webContents.send(shortcutChannel);
+  });
+
   // Deny all permission requests (camera, mic, geolocation, etc.)
   window.webContents.session.setPermissionRequestHandler((_wc, _perm, callback) => {
     callback(false);
@@ -79,8 +87,13 @@ function buildAppMenu(): void {
   };
 
   const isMac = process.platform === "darwin";
+  if (!isMac) {
+    Menu.setApplicationMenu(null);
+    return;
+  }
+
   const menu = Menu.buildFromTemplate([
-    ...(isMac ? [{ role: "appMenu" as const }] : []),
+    { role: "appMenu" as const },
     {
       label: "File",
       submenu: [

@@ -361,7 +361,9 @@ describe("IPC handlers remediation", () => {
     expect(createInput.cli).toBe("claude");
     expect(createInput.role).toBe("architect");
     expect(createInput.launch.command).toBe("claude");
-    expect(createInput.launch.args).toEqual(["--dangerously-skip-permissions"]);
+    // Bootstrap prompt file is first (before --mcp-config), yolo flag second
+    expect(createInput.launch.args[0]).toMatch(/kleiber-bootstrap.*\.md$/);
+    expect(createInput.launch.args[1]).toBe("--dangerously-skip-permissions");
     expect(createInput.launch.env).toEqual({ KLEIBER_AGENT_ROLE: "architect" });
   });
 
@@ -475,10 +477,11 @@ describe("IPC handlers remediation", () => {
 
     const createInput = mockState.createSessionMock.mock.calls.at(-1)?.[0] as Record<string, any>;
     expect(createInput.launch.command).toBe("claude");
-    expect(createInput.launch.args).toEqual([]);
     expect(createInput.launch.env).toEqual({ KLEIBER_AGENT_ROLE: "architect" });
-    // For Claude Code, the bootstrap prompt is written to a temp file and the file path is passed.
-    const promptPath: string = createInput.launch.prompt;
+    expect(createInput.launch.prompt).toBeUndefined();
+    // For Claude Code, the bootstrap prompt file is pushed into launch.args (before --mcp-config)
+    // so Claude Code reads it as initial context rather than treating it as a second MCP config.
+    const promptPath: string = createInput.launch.args[0];
     expect(promptPath).toMatch(/kleiber-bootstrap.*\.md$/);
     const { readFile } = await import("node:fs/promises");
     const promptContent = await readFile(promptPath, "utf8");

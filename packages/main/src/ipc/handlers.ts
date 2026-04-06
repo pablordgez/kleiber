@@ -628,14 +628,16 @@ export async function resolveSessionCreateOptions(
     const usedRoleActivation = addRoleLaunchArgs(launchArgs, override, role);
     if (!usedRoleActivation) {
       const promptText = buildAgentBootstrapPrompt(role, canonicalCli, requestedMcpEnabled);
-      // Claude Code treats bare positional args as file paths to read as initial context.
-      // Write the bootstrap prompt to a temp file so it can be passed by path.
       if (canonicalCli === "claude") {
+        // Claude Code reads positional args as file paths for initial context.
+        // The prompt file must come BEFORE --mcp-config in the arg list, otherwise
+        // Claude Code tries to parse the prompt file as a second MCP config (invalid JSON).
+        // Push into launchArgs here so MCP args are appended after it.
         const promptDir = path.join(os.tmpdir(), "kleiber-bootstrap");
         await mkdir(promptDir, { recursive: true });
         const promptFile = path.join(promptDir, `${crypto.randomUUID()}.md`);
         await writeFile(promptFile, promptText, "utf8");
-        launchPrompt = promptFile;
+        launchArgs.push(promptFile);
       } else {
         launchPrompt = promptText;
       }

@@ -1,4 +1,6 @@
 # Kleiber
+> [!WARNING]  
+> This project is still in development, expect bugs
 
 Kleiber is a cross-platform control room for serious agentic development: a simpler, more transparent alternative to bloated harness-native ecosystems.
 

@@ -1,4 +1,5 @@
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import { app, BrowserWindow, Menu, session as electronSession } from "electron";
 import { getNonMacShortcutChannel } from "./shortcuts";
 import { configureMainLogging, startSecurityEventLogging } from "./logging";
@@ -6,6 +7,26 @@ import { registerIpcHandlers } from "./ipc/handlers";
 import { IPC_CHANNELS } from "@kleiber/shared";
 
 configureMainLogging(process.env.NODE_ENV === "development");
+
+// When launched from a desktop environment (not a terminal), Electron inherits
+// a minimal PATH that omits shell-configured directories such as npm/nvm/volta
+// global bin paths. Spawn a login shell to retrieve the user's full PATH and
+// apply it to the process before any binary detection happens.
+if (process.platform !== "win32") {
+  const shell = process.env.SHELL ?? "/bin/bash";
+  try {
+    const result = spawnSync(shell, ["-l", "-c", "echo $PATH"], {
+      encoding: "utf8",
+      timeout: 3000,
+    });
+    const shellPath = result.stdout?.trim();
+    if (shellPath) {
+      process.env.PATH = shellPath;
+    }
+  } catch {
+    // Non-fatal: fall back to the inherited PATH
+  }
+}
 
 if (process.platform === "linux") {
   // Force the non-portal native dialog backend so directory pickers expose the

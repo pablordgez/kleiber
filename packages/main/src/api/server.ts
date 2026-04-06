@@ -31,6 +31,7 @@ export interface BuildRemoteApiAppOptions {
   };
   signingKey: Buffer;
   now?: () => number;
+  webRoot?: string;
   websocket?: {
     authTimeoutMs?: number;
     maxConnectionsPerUser?: number;
@@ -88,8 +89,9 @@ export async function buildRemoteApiApp(options: BuildRemoteApiAppOptions): Prom
   });
 
   // Serve static files from the Vite-built web UI bundle
+  const webRoot = options.webRoot ?? path.join(__dirname, "../web");
   await app.register(fastifyStatic, {
-    root: path.join(__dirname, "../web"),
+    root: webRoot,
     wildcard: false,
   });
 
@@ -207,6 +209,7 @@ export class RemoteApiServerController {
   } | null;
   readonly #now: () => number;
   readonly #signingKey: Buffer;
+  readonly #webRoot: string | undefined;
   #app: FastifyInstance | null = null;
   #state: RemoteApiServerState | null = null;
 
@@ -220,6 +223,7 @@ export class RemoteApiServerController {
       wrapperArgs: string[];
     };
     now?: () => number;
+    webRoot?: string;
   }) {
     this.#store = options.store;
     this.#packManager = options.packManager;
@@ -228,6 +232,7 @@ export class RemoteApiServerController {
     this.#mcpRuntime = options.mcpRuntime ?? null;
     this.#now = options.now ?? (() => Date.now());
     this.#signingKey = createSigningKey();
+    this.#webRoot = options.webRoot;
   }
 
   getState(): RemoteApiServerState | null {
@@ -263,6 +268,7 @@ export class RemoteApiServerController {
       ...(this.#mcpRuntime ? { mcpRuntime: this.#mcpRuntime } : {}),
       signingKey: this.#signingKey,
       now: this.#now,
+      ...(this.#webRoot !== undefined ? { webRoot: this.#webRoot } : {}),
     });
     await app.listen({ host, port: selectedPort });
 

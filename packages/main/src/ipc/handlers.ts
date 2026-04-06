@@ -162,6 +162,7 @@ const remoteApiServer = new RemoteApiServerController({
     wrapperCommand: process.execPath,
     wrapperArgs: [mcpWrapperScriptPath],
   },
+  webRoot: app.isPackaged ? path.join(process.resourcesPath, "web") : undefined,
 });
 
 // IPC output batching: accumulate PTY chunks for up to 16 ms before sending to

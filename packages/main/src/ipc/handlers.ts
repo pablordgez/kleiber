@@ -379,6 +379,19 @@ function mergePackConfig(projectConfig: AgentPackConfig | null): AgentPackConfig
     ]),
   );
 
+  const mergedHarnessAdapters = Object.fromEntries(
+    [...new Set([
+      ...Object.keys(DEFAULT_PACK_CONFIG.harness_adapters),
+      ...Object.keys(projectConfig.harness_adapters),
+    ])].map((key) => [
+      key,
+      mergeUnknownRecord(
+        DEFAULT_PACK_CONFIG.harness_adapters[key],
+        projectConfig.harness_adapters[key],
+      ),
+    ]),
+  );
+
   return {
     ...DEFAULT_PACK_CONFIG,
     ...projectConfig,
@@ -399,10 +412,7 @@ function mergePackConfig(projectConfig: AgentPackConfig | null): AgentPackConfig
       ...DEFAULT_PACK_CONFIG.mcp,
       ...projectConfig.mcp,
     },
-    harness_adapters: {
-      ...DEFAULT_PACK_CONFIG.harness_adapters,
-      ...projectConfig.harness_adapters,
-    },
+    harness_adapters: mergedHarnessAdapters as AgentPackConfig["harness_adapters"],
     agent_overrides: {
       ...mergedAgentOverrides,
     },
@@ -472,7 +482,24 @@ function isExecutableFile(filePath: string): boolean {
   }
 }
 
-function buildCodexAgentBootstrapPrompt(role: string, mcpEnabled: boolean): string {
+function buildAgentBootstrapPrompt(role: string, cli: AgentCli, mcpEnabled: boolean): string {
+  const agentConfigPaths: Record<AgentCli, string> = {
+    codex: `.codex/agents/${role}.toml`,
+    claude: `.claude/agents/${role}.md`,
+    gemini: `.gemini/agents/${role}.md`,
+    opencode: `.opencode/agents/${role}.md`,
+  };
+
+  const agentConfigInstructions: Record<AgentCli, string> = {
+    codex: `adopt its description and developer_instructions for this top-level session`,
+    claude: `adopt its system prompt and instructions for this top-level session`,
+    gemini: `adopt its system prompt and instructions for this top-level session`,
+    opencode: `adopt its system prompt and instructions for this top-level session`,
+  };
+
+  const configPath = agentConfigPaths[cli] ?? `.agents/${role}.md`;
+  const configInstruction = agentConfigInstructions[cli] ?? `adopt its instructions for this top-level session`;
+
   return [
     `You are operating inside Kleiber as the ${role} role from ${BUNDLED_PACK_DISPLAY_NAME}.`,
     "Treat other kleiber-agents roles as peer specialists in the same ecosystem.",
@@ -480,7 +507,7 @@ function buildCodexAgentBootstrapPrompt(role: string, mcpEnabled: boolean): stri
       ? "Kleiber session orchestration may be available in this session through the existing MCP tools."
       : "Kleiber session orchestration is disabled for this session, so do not assume MCP access.",
     "Distinguish Kleiber session orchestration from harness-native delegation features.",
-    `Before doing anything else, read .agents/skills/project-spec-utils/references/kleiber-ecosystem.md if it exists, then read .codex/agents/${role}.toml if it exists and adopt its description and developer_instructions for this top-level session.`,
+    `Before doing anything else, read .agents/skills/project-spec-utils/references/kleiber-ecosystem.md if it exists, then read ${configPath} if it exists and ${configInstruction}.`,
     "If Kleiber orchestration or tool availability is uncertain, inspect local context and available capabilities before claiming support.",
     "Briefly state that the Kleiber agent context is loaded and wait for the user's task.",
   ].join(" ");
@@ -580,8 +607,8 @@ export async function resolveSessionCreateOptions(
 
   if (role) {
     const usedRoleActivation = addRoleLaunchArgs(launchArgs, override, role);
-    if (!usedRoleActivation && canonicalCli === "codex") {
-      launchPrompt = buildCodexAgentBootstrapPrompt(role, requestedMcpEnabled);
+    if (!usedRoleActivation) {
+      launchPrompt = buildAgentBootstrapPrompt(role, canonicalCli, requestedMcpEnabled);
     }
   }
 

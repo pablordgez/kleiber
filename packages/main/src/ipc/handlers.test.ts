@@ -365,6 +365,60 @@ describe("IPC handlers remediation", () => {
     expect(createInput.launch.env).toEqual({ KLEIBER_AGENT_ROLE: "architect" });
   });
 
+  it("preserves default yolo_flag and mcp_injection when project config omits them", async () => {
+    const { registerIpcHandlers } = await import("./handlers.js");
+    registerIpcHandlers();
+
+    const projectDir = await mkdtemp(path.join(os.tmpdir(), "kleiber-yolo-merge-"));
+    mockState.projects.set("project-yolo-merge", {
+      id: "project-yolo-merge",
+      name: "Project Yolo Merge",
+      directoryPath: projectDir,
+      yoloDefault: false,
+      createdAt: new Date().toISOString(),
+    });
+
+    // Project config defines adapters WITHOUT yolo_flag (like the real agent_pack_config.yaml)
+    mockState.readProjectConfigMock.mockResolvedValue(
+      buildPackConfig({
+        harness_adapters: {
+          claude_code: {
+            enabled: true,
+            orchestration: "native_subagents_or_agent_teams",
+            launch_command: "claude",
+          },
+          codex: {
+            enabled: true,
+            orchestration: "native_subagents",
+            launch_command: "codex",
+          },
+          gemini_cli: {
+            enabled: true,
+            orchestration: "experimental_subagents",
+            launch_command: "gemini",
+          },
+        },
+      }),
+    );
+
+    const handler = mockState.registeredHandlers.get(IPC_CHANNELS.sessions.create);
+
+    // Claude YOLO should still get --dangerously-skip-permissions
+    await handler?.({}, { projectId: "project-yolo-merge", name: "Claude YOLO", type: "agent", cli: "claude", yolo: true });
+    const claudeInput = mockState.createSessionMock.mock.calls.at(-1)?.[0] as Record<string, any>;
+    expect(claudeInput.launch.args).toContain("--dangerously-skip-permissions");
+
+    // Codex YOLO should still get --dangerously-bypass-approvals-and-sandbox
+    await handler?.({}, { projectId: "project-yolo-merge", name: "Codex YOLO", type: "agent", cli: "codex", yolo: true });
+    const codexInput = mockState.createSessionMock.mock.calls.at(-1)?.[0] as Record<string, any>;
+    expect(codexInput.launch.args).toContain("--dangerously-bypass-approvals-and-sandbox");
+
+    // Gemini YOLO should still get --yolo
+    await handler?.({}, { projectId: "project-yolo-merge", name: "Gemini YOLO", type: "agent", cli: "gemini", yolo: true });
+    const geminiInput = mockState.createSessionMock.mock.calls.at(-1)?.[0] as Record<string, any>;
+    expect(geminiInput.launch.args).toContain("--yolo");
+  });
+
   it("bootstraps Codex harness + agent sessions with an initial prompt when no role flag exists", async () => {
     const { registerIpcHandlers } = await import("./handlers.js");
     registerIpcHandlers();
@@ -395,6 +449,70 @@ describe("IPC handlers remediation", () => {
     expect(createInput.launch.prompt).toContain("Kleiber session orchestration may be available");
     expect(createInput.launch.prompt).toContain(".agents/skills/project-spec-utils/references/kleiber-ecosystem.md");
     expect(createInput.launch.prompt).toContain(".codex/agents/architect.toml");
+  });
+
+  it("bootstraps Claude harness + agent sessions with an initial prompt when no role flag exists", async () => {
+    const { registerIpcHandlers } = await import("./handlers.js");
+    registerIpcHandlers();
+
+    const projectDir = await mkdtemp(path.join(os.tmpdir(), "kleiber-claude-agent-"));
+    mockState.projects.set("project-claude-agent", {
+      id: "project-claude-agent",
+      name: "Project Claude Agent",
+      directoryPath: projectDir,
+      yoloDefault: false,
+      createdAt: new Date().toISOString(),
+    });
+
+    const handler = mockState.registeredHandlers.get(IPC_CHANNELS.sessions.create);
+    await handler?.({}, {
+      projectId: "project-claude-agent",
+      name: "Architect",
+      type: "agent_role",
+      cli: "claude",
+      role: "architect",
+    });
+
+    const createInput = mockState.createSessionMock.mock.calls.at(-1)?.[0] as Record<string, any>;
+    expect(createInput.launch.command).toBe("claude");
+    expect(createInput.launch.args).toEqual([]);
+    expect(createInput.launch.env).toEqual({ KLEIBER_AGENT_ROLE: "architect" });
+    expect(createInput.launch.prompt).toContain("architect role from kleiber-agents");
+    expect(createInput.launch.prompt).toContain("Kleiber session orchestration may be available");
+    expect(createInput.launch.prompt).toContain(".agents/skills/project-spec-utils/references/kleiber-ecosystem.md");
+    expect(createInput.launch.prompt).toContain(".claude/agents/architect.md");
+  });
+
+  it("bootstraps Gemini harness + agent sessions with an initial prompt when no role flag exists", async () => {
+    const { registerIpcHandlers } = await import("./handlers.js");
+    registerIpcHandlers();
+
+    const projectDir = await mkdtemp(path.join(os.tmpdir(), "kleiber-gemini-agent-"));
+    mockState.projects.set("project-gemini-agent", {
+      id: "project-gemini-agent",
+      name: "Project Gemini Agent",
+      directoryPath: projectDir,
+      yoloDefault: false,
+      createdAt: new Date().toISOString(),
+    });
+
+    const handler = mockState.registeredHandlers.get(IPC_CHANNELS.sessions.create);
+    await handler?.({}, {
+      projectId: "project-gemini-agent",
+      name: "Architect",
+      type: "agent_role",
+      cli: "gemini",
+      role: "architect",
+    });
+
+    const createInput = mockState.createSessionMock.mock.calls.at(-1)?.[0] as Record<string, any>;
+    expect(createInput.launch.command).toBe("gemini");
+    expect(createInput.launch.args).toEqual([]);
+    expect(createInput.launch.env).toEqual({ KLEIBER_AGENT_ROLE: "architect" });
+    expect(createInput.launch.prompt).toContain("architect role from kleiber-agents");
+    expect(createInput.launch.prompt).toContain("Kleiber session orchestration may be available");
+    expect(createInput.launch.prompt).toContain(".agents/skills/project-spec-utils/references/kleiber-ecosystem.md");
+    expect(createInput.launch.prompt).toContain(".gemini/agents/architect.md");
   });
 
   it("builds inline Codex MCP config for agent sessions", async () => {

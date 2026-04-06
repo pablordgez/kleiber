@@ -38,6 +38,9 @@ linux:
         - x64
   category: Utility
 
+deb:
+  afterInstall: build/linux/after-install.sh
+
 # ──────────────────────────────────────────────
 # macOS
 # ──────────────────────────────────────────────

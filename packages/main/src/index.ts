@@ -17,9 +17,11 @@ if (process.platform !== "win32") {
   const shell = process.env.SHELL ?? "/bin/bash";
   log.info(`[path-fix] shell=${shell} inherited PATH=${process.env.PATH ?? "(unset)"}`);
   try {
-    const result = spawnSync(shell, ["-l", "-c", "printf '%s' \"$PATH\""], {
+    const result = spawnSync(shell, ["-l", "-i", "-c", "printf '%s' \"$PATH\""], {
       encoding: "utf8",
       timeout: 3000,
+      // TERM=dumb + PS1 prevent interactive prompts from blocking the shell
+      env: { ...process.env, TERM: "dumb", PS1: "$ " },
     });
     log.info(`[path-fix] spawn status=${String(result.status)} error=${String(result.error)} stderr=${result.stderr?.trim()}`);
     const shellPath = result.stdout?.trim();

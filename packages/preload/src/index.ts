@@ -23,7 +23,19 @@ interface PackStatus {
 const api = {
   projects: {
     list: (): Promise<Project[]> => ipcRenderer.invoke("projects:list"),
-    create: (data: { name: string; directoryPath: string }): Promise<Project> =>
+    create: (data: {
+      name: string;
+      directoryPath: string;
+      packConfig?: {
+        allowedProviders: string[];
+        models: {
+          lowComplexity: { provider: string; model: string };
+          mediumComplexity: { provider: string; model: string };
+          highComplexity: { provider: string; model: string };
+        };
+        notes: string;
+      };
+    }): Promise<Project> =>
       ipcRenderer.invoke("projects:create", data),
     pickDirectory: (): Promise<string | null> => ipcRenderer.invoke("projects:pick-directory"),
     remove: (id: UUID): Promise<void> => ipcRenderer.invoke("projects:remove", id),
@@ -79,6 +91,7 @@ const api = {
   pack: {
     status: (projectId?: UUID): Promise<PackStatus> => ipcRenderer.invoke("pack:status", projectId),
     detectCli: (cli: AgentCli): Promise<boolean> => ipcRenderer.invoke("pack:detect-cli", cli),
+    detectProviders: (): Promise<string[]> => ipcRenderer.invoke("pack:detect-providers"),
     install: (): Promise<void> => ipcRenderer.invoke("pack:install"),
     roles: (): Promise<string[]> => ipcRenderer.invoke("pack:roles"),
   },

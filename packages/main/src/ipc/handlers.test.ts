@@ -832,6 +832,9 @@ describe("IPC handlers remediation", () => {
       wrapperCommand: process.execPath,
       wrapperArgs: ["/tmp/wrapper.js"],
       argsTemplate: ["--mcp", "{wrapperCommand}", "{wrapperArgsJson}"],
+      configContentTemplate:
+        '{"mcpServers":{"kleiber":{"command":{wrapperCommandJson},"args":{wrapperArgsJson},"env":{"KLEIBER_SESSION_ID":"{sessionId}","KLEIBER_PROJECT_ID":"{projectId}","KLEIBER_MCP_SOCKET_PATH":"{mcpSocketPath}","KLEIBER_MCP_DEBUG_LOG_PATH":"{mcpDebugLogPath}","ELECTRON_RUN_AS_NODE":"1"}}}}',
+      configFileName: "claude-mcp-config.json",
       envTemplate: {
         MCP_SESSION: "{sessionId}",
         MCP_PROJECT: "{projectId}",

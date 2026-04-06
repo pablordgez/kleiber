@@ -627,7 +627,18 @@ export async function resolveSessionCreateOptions(
   if (role) {
     const usedRoleActivation = addRoleLaunchArgs(launchArgs, override, role);
     if (!usedRoleActivation) {
-      launchPrompt = buildAgentBootstrapPrompt(role, canonicalCli, requestedMcpEnabled);
+      const promptText = buildAgentBootstrapPrompt(role, canonicalCli, requestedMcpEnabled);
+      // Claude Code treats bare positional args as file paths to read as initial context.
+      // Write the bootstrap prompt to a temp file so it can be passed by path.
+      if (canonicalCli === "claude") {
+        const promptDir = path.join(os.tmpdir(), "kleiber-bootstrap");
+        await mkdir(promptDir, { recursive: true });
+        const promptFile = path.join(promptDir, `${crypto.randomUUID()}.md`);
+        await writeFile(promptFile, promptText, "utf8");
+        launchPrompt = promptFile;
+      } else {
+        launchPrompt = promptText;
+      }
     }
   }
 
@@ -713,16 +724,6 @@ function generateProjectConfigYaml(config: ProjectPackConfigData): string {
     agent_overrides: {} as Record<string, unknown>,
   };
   return YAML.stringify(configObj);
-}
-
-function detectAvailableProviders(): string[] {
-  const detected: string[] = [];
-  if (process.env.ANTHROPIC_API_KEY) detected.push("anthropic");
-  if (process.env.OPENAI_API_KEY) detected.push("openai");
-  if (process.env.GOOGLE_API_KEY || process.env.GOOGLE_AI_STUDIO_KEY || process.env.GEMINI_API_KEY) {
-    detected.push("google");
-  }
-  return detected;
 }
 
 export function registerIpcHandlers(): void {
@@ -897,9 +898,6 @@ export function registerIpcHandlers(): void {
       projectConfigExists: status.projectConfigExists,
       projectConfigError: status.projectConfigError,
     };
-  });
-  ipcMain.handle(IPC_CHANNELS.pack.detectProviders, async (): Promise<string[]> => {
-    return detectAvailableProviders();
   });
   ipcMain.handle(IPC_CHANNELS.pack.detectCli, async (_e, cliIdentifier: string): Promise<boolean> => {
     const cli = normalizeCliIdentifier(cliIdentifier);

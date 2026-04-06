@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
-import { Project } from '@kleiber/shared';
+import { Project, AgentCli } from '@kleiber/shared';
 import { FolderOpen, X } from 'lucide-react';
 import { useAppStore } from '../../store/useAppStore';
 
@@ -10,7 +10,18 @@ function basename(filePath: string): string {
   return segments.at(-1) ?? normalized;
 }
 
-const ALL_PROVIDERS = ['anthropic', 'openai', 'google'];
+interface ProviderMeta {
+  id: string;
+  label: string;
+  cli: AgentCli;
+}
+
+const PROVIDER_META: ProviderMeta[] = [
+  { id: 'anthropic', label: 'Anthropic', cli: 'claude' },
+  { id: 'openai', label: 'OpenAI', cli: 'codex' },
+  { id: 'opencode', label: 'OpenCode', cli: 'opencode' },
+  { id: 'google', label: 'Google', cli: 'gemini' },
+];
 
 interface ModelRow {
   provider: string;
@@ -32,7 +43,7 @@ export const NewProjectDialog: React.FC<NewProjectDialogProps> = ({
   const [directoryPath, setDirectoryPath] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isPickingDirectory, setIsPickingDirectory] = useState(false);
-  const [detectedProviders, setDetectedProviders] = useState<string[]>([]);
+  const [detectedProviders, setDetectedProviders] = useState<Record<string, boolean | null>>({});
   const [selectedProviders, setSelectedProviders] = useState<string[]>([]);
   const [lowComplexity, setLowComplexity] = useState<ModelRow>({ provider: '', model: '' });
   const [mediumComplexity, setMediumComplexity] = useState<ModelRow>({ provider: '', model: '' });
@@ -43,18 +54,24 @@ export const NewProjectDialog: React.FC<NewProjectDialogProps> = ({
   useEffect(() => {
     if (!open) return;
     void (async () => {
-      try {
-        const providers = await window.kleiber.pack.detectProviders();
-        setDetectedProviders(providers);
-        setSelectedProviders(providers);
-        const defaultProvider = providers[0] ?? '';
-        setLowComplexity({ provider: defaultProvider, model: '' });
-        setMediumComplexity({ provider: defaultProvider, model: '' });
-        setHighComplexity({ provider: defaultProvider, model: '' });
-      } catch {
-        setDetectedProviders([]);
-        setSelectedProviders([]);
+      const results = await Promise.all(
+        PROVIDER_META.map(async (p) => ({
+          id: p.id,
+          detected: await window.kleiber.pack.detectCli(p.cli).catch(() => false),
+        })),
+      );
+      const detectedMap: Record<string, boolean> = {};
+      const autoSelected: string[] = [];
+      for (const r of results) {
+        detectedMap[r.id] = r.detected;
+        if (r.detected) autoSelected.push(r.id);
       }
+      setDetectedProviders(detectedMap);
+      setSelectedProviders(autoSelected);
+      const defaultProvider = autoSelected[0] ?? '';
+      setLowComplexity({ provider: defaultProvider, model: '' });
+      setMediumComplexity({ provider: defaultProvider, model: '' });
+      setHighComplexity({ provider: defaultProvider, model: '' });
     })();
   }, [open]);
 
@@ -112,7 +129,7 @@ export const NewProjectDialog: React.FC<NewProjectDialogProps> = ({
   const resetForm = () => {
     setName('');
     setDirectoryPath('');
-    setDetectedProviders([]);
+    setDetectedProviders({});
     setSelectedProviders([]);
     setLowComplexity({ provider: '', model: '' });
     setMediumComplexity({ provider: '', model: '' });
@@ -135,13 +152,13 @@ export const NewProjectDialog: React.FC<NewProjectDialogProps> = ({
     }
   };
 
-  const toggleProvider = (provider: string) => {
+  const toggleProvider = (id: string) => {
     setSelectedProviders((prev) =>
-      prev.includes(provider) ? prev.filter((p) => p !== provider) : [...prev, provider],
+      prev.includes(id) ? prev.filter((p) => p !== id) : [...prev, id],
     );
   };
 
-  const providerOptions = selectedProviders.length > 0 ? selectedProviders : ALL_PROVIDERS;
+  const providerOptions = selectedProviders.length > 0 ? selectedProviders : PROVIDER_META.map((p) => p.id);
 
   const inputClass =
     'flex h-9 w-full rounded-lg border border-[#1C1C1C] bg-[#000000] px-3 py-2 text-sm text-[#FFFFFF] placeholder:text-[#444444] focus:outline-none focus:border-[#333333] transition-colors';
@@ -216,14 +233,15 @@ export const NewProjectDialog: React.FC<NewProjectDialogProps> = ({
                 <div className="flex flex-col gap-1.5 mb-4">
                   <label className={labelClass}>Providers</label>
                   <div className="flex flex-wrap gap-2">
-                    {ALL_PROVIDERS.map((provider) => {
-                      const isDetected = detectedProviders.includes(provider);
-                      const isSelected = selectedProviders.includes(provider);
+                    {PROVIDER_META.map((p) => {
+                      const isDetected = detectedProviders[p.id] === true;
+                      const isChecking = detectedProviders[p.id] === null || !(p.id in detectedProviders);
+                      const isSelected = selectedProviders.includes(p.id);
                       return (
                         <button
-                          key={provider}
+                          key={p.id}
                           type="button"
-                          onClick={() => toggleProvider(provider)}
+                          onClick={() => toggleProvider(p.id)}
                           className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-sm font-medium transition-colors ${
                             isSelected
                               ? 'border-[#444444] bg-[#1A1A1A] text-[#FFFFFF]'
@@ -232,16 +250,20 @@ export const NewProjectDialog: React.FC<NewProjectDialogProps> = ({
                         >
                           <span
                             className={`w-1.5 h-1.5 rounded-full ${
-                              isDetected ? 'bg-green-500' : 'bg-[#444444]'
+                              isChecking
+                                ? 'bg-[#444444] animate-pulse'
+                                : isDetected
+                                  ? 'bg-green-500'
+                                  : 'bg-[#333333]'
                             }`}
                           />
-                          {provider}
+                          {p.label}
                         </button>
                       );
                     })}
                   </div>
                   <p className="text-xs text-[#555555]">
-                    Green dot = API key detected in environment.
+                    Green dot = CLI detected on PATH.
                   </p>
                 </div>
 
@@ -265,9 +287,12 @@ export const NewProjectDialog: React.FC<NewProjectDialogProps> = ({
                         {selectedProviders.length === 0 && (
                           <option value="">provider</option>
                         )}
-                        {providerOptions.map((p) => (
-                          <option key={p} value={p}>{p}</option>
-                        ))}
+                        {providerOptions.map((pid) => {
+                          const meta = PROVIDER_META.find((p) => p.id === pid);
+                          return (
+                            <option key={pid} value={pid}>{meta?.label ?? pid}</option>
+                          );
+                        })}
                       </select>
                       <input
                         type="text"

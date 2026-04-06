@@ -29,7 +29,6 @@ export const IPC_CHANNELS = {
   pack: {
     status: "pack:status",
     detectCli: "pack:detect-cli",
-    detectProviders: "pack:detect-providers",
     install: "pack:install",
     roles: "pack:roles",
   },

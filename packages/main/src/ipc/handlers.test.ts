@@ -447,7 +447,7 @@ describe("IPC handlers remediation", () => {
     expect(createInput.launch.env).toEqual({ KLEIBER_AGENT_ROLE: "architect" });
     expect(createInput.launch.prompt).toContain("architect role from kleiber-agents");
     expect(createInput.launch.prompt).toContain("Kleiber session orchestration may be available");
-    expect(createInput.launch.prompt).toContain(".agents/skills/project-spec-utils/references/kleiber-ecosystem.md");
+    expect(createInput.launch.prompt).toContain(path.join(os.homedir(), ".agents", "skills", "project-spec-utils", "references", "kleiber-ecosystem.md"));
     expect(createInput.launch.prompt).toContain(".codex/agents/architect.toml");
   });
 
@@ -477,10 +477,15 @@ describe("IPC handlers remediation", () => {
     expect(createInput.launch.command).toBe("claude");
     expect(createInput.launch.args).toEqual([]);
     expect(createInput.launch.env).toEqual({ KLEIBER_AGENT_ROLE: "architect" });
-    expect(createInput.launch.prompt).toContain("architect role from kleiber-agents");
-    expect(createInput.launch.prompt).toContain("Kleiber session orchestration may be available");
-    expect(createInput.launch.prompt).toContain(".agents/skills/project-spec-utils/references/kleiber-ecosystem.md");
-    expect(createInput.launch.prompt).toContain(".claude/agents/architect.md");
+    // For Claude Code, the bootstrap prompt is written to a temp file and the file path is passed.
+    const promptPath: string = createInput.launch.prompt;
+    expect(promptPath).toMatch(/kleiber-bootstrap.*\.md$/);
+    const { readFile } = await import("node:fs/promises");
+    const promptContent = await readFile(promptPath, "utf8");
+    expect(promptContent).toContain("architect role from kleiber-agents");
+    expect(promptContent).toContain("Kleiber session orchestration may be available");
+    expect(promptContent).toContain(path.join(os.homedir(), ".agents", "skills", "project-spec-utils", "references", "kleiber-ecosystem.md"));
+    expect(promptContent).toContain(".claude/agents/architect.md");
   });
 
   it("bootstraps Gemini harness + agent sessions with an initial prompt when no role flag exists", async () => {
@@ -511,7 +516,7 @@ describe("IPC handlers remediation", () => {
     expect(createInput.launch.env).toEqual({ KLEIBER_AGENT_ROLE: "architect" });
     expect(createInput.launch.prompt).toContain("architect role from kleiber-agents");
     expect(createInput.launch.prompt).toContain("Kleiber session orchestration may be available");
-    expect(createInput.launch.prompt).toContain(".agents/skills/project-spec-utils/references/kleiber-ecosystem.md");
+    expect(createInput.launch.prompt).toContain(path.join(os.homedir(), ".agents", "skills", "project-spec-utils", "references", "kleiber-ecosystem.md"));
     expect(createInput.launch.prompt).toContain(".gemini/agents/architect.md");
   });
 

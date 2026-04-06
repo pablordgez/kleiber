@@ -91,7 +91,6 @@ const api = {
   pack: {
     status: (projectId?: UUID): Promise<PackStatus> => ipcRenderer.invoke("pack:status", projectId),
     detectCli: (cli: AgentCli): Promise<boolean> => ipcRenderer.invoke("pack:detect-cli", cli),
-    detectProviders: (): Promise<string[]> => ipcRenderer.invoke("pack:detect-providers"),
     install: (): Promise<void> => ipcRenderer.invoke("pack:install"),
     roles: (): Promise<string[]> => ipcRenderer.invoke("pack:roles"),
   },

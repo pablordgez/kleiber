@@ -13,14 +13,15 @@ const CLIS: Array<{ value: AgentCli | 'plain'; label: string }> = [
 const AGENT_CLIS: AgentCli[] = ['claude', 'codex', 'opencode', 'gemini'];
 
 function formatRoleLabel(role: string): string {
-  return role
-    .split('-')
-    .map((segment) => {
-      if (segment.toLowerCase() === 'ux') {
-        return 'UI/UX';
-      }
+  const segments = role.split('-');
+  return segments
+    .map((segment, i) => {
+      const lower = segment.toLowerCase();
+      if (lower === 'ux') return 'UI/UX';
+      if (lower === 'ui' && segments[i + 1]?.toLowerCase() === 'ux') return null;
       return `${segment.slice(0, 1).toUpperCase()}${segment.slice(1)}`;
     })
+    .filter((s): s is string => s !== null)
     .join(' ');
 }
 

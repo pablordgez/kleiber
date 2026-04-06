@@ -1,39 +1,15 @@
 import path from "node:path";
-import { spawnSync } from "node:child_process";
 import { app, BrowserWindow, Menu, session as electronSession } from "electron";
-import log from "electron-log/main";
 import { getNonMacShortcutChannel } from "./shortcuts";
 import { configureMainLogging, startSecurityEventLogging } from "./logging";
+import { fixPath } from "./fix-path";
 import { registerIpcHandlers } from "./ipc/handlers";
 import { IPC_CHANNELS } from "@kleiber/shared";
 
 configureMainLogging(process.env.NODE_ENV === "development");
 
-// When launched from a desktop environment (not a terminal), Electron inherits
-// a minimal PATH that omits shell-configured directories such as npm/nvm/volta
-// global bin paths. Spawn a login shell to retrieve the user's full PATH and
-// apply it to the process before any binary detection happens.
 if (process.platform !== "win32") {
-  const shell = process.env.SHELL ?? "/bin/bash";
-  log.info(`[path-fix] shell=${shell} inherited PATH=${process.env.PATH ?? "(unset)"}`);
-  try {
-    const result = spawnSync(shell, ["-l", "-i", "-c", "printf '%s' \"$PATH\""], {
-      encoding: "utf8",
-      timeout: 3000,
-      // TERM=dumb + PS1 prevent interactive prompts from blocking the shell
-      env: { ...process.env, TERM: "dumb", PS1: "$ " },
-    });
-    log.info(`[path-fix] spawn status=${String(result.status)} error=${String(result.error)} stderr=${result.stderr?.trim()}`);
-    const shellPath = result.stdout?.trim();
-    if (shellPath) {
-      process.env.PATH = shellPath;
-      log.info(`[path-fix] updated PATH=${shellPath}`);
-    } else {
-      log.warn("[path-fix] login shell returned empty PATH, keeping inherited value");
-    }
-  } catch (err) {
-    log.warn(`[path-fix] failed to spawn login shell: ${String(err)}`);
-  }
+  fixPath();
 }
 
 if (process.platform === "linux") {

@@ -361,7 +361,9 @@ describe("IPC handlers remediation", () => {
     expect(createInput.cli).toBe("claude");
     expect(createInput.role).toBe("architect");
     expect(createInput.launch.command).toBe("claude");
-    expect(createInput.launch.args).toEqual(["--dangerously-skip-permissions"]);
+    // Bootstrap prompt file is first (before --mcp-config), yolo flag second
+    expect(createInput.launch.args[0]).toMatch(/kleiber-bootstrap.*\.md$/);
+    expect(createInput.launch.args[1]).toBe("--dangerously-skip-permissions");
     expect(createInput.launch.env).toEqual({ KLEIBER_AGENT_ROLE: "architect" });
   });
 
@@ -447,7 +449,7 @@ describe("IPC handlers remediation", () => {
     expect(createInput.launch.env).toEqual({ KLEIBER_AGENT_ROLE: "architect" });
     expect(createInput.launch.prompt).toContain("architect role from kleiber-agents");
     expect(createInput.launch.prompt).toContain("Kleiber session orchestration may be available");
-    expect(createInput.launch.prompt).toContain(".agents/skills/project-spec-utils/references/kleiber-ecosystem.md");
+    expect(createInput.launch.prompt).toContain(path.join(os.homedir(), ".agents", "skills", "project-spec-utils", "references", "kleiber-ecosystem.md"));
     expect(createInput.launch.prompt).toContain(".codex/agents/architect.toml");
   });
 
@@ -475,12 +477,18 @@ describe("IPC handlers remediation", () => {
 
     const createInput = mockState.createSessionMock.mock.calls.at(-1)?.[0] as Record<string, any>;
     expect(createInput.launch.command).toBe("claude");
-    expect(createInput.launch.args).toEqual([]);
     expect(createInput.launch.env).toEqual({ KLEIBER_AGENT_ROLE: "architect" });
-    expect(createInput.launch.prompt).toContain("architect role from kleiber-agents");
-    expect(createInput.launch.prompt).toContain("Kleiber session orchestration may be available");
-    expect(createInput.launch.prompt).toContain(".agents/skills/project-spec-utils/references/kleiber-ecosystem.md");
-    expect(createInput.launch.prompt).toContain(".claude/agents/architect.md");
+    expect(createInput.launch.prompt).toBeUndefined();
+    // For Claude Code, the bootstrap prompt file is pushed into launch.args (before --mcp-config)
+    // so Claude Code reads it as initial context rather than treating it as a second MCP config.
+    const promptPath: string = createInput.launch.args[0];
+    expect(promptPath).toMatch(/kleiber-bootstrap.*\.md$/);
+    const { readFile } = await import("node:fs/promises");
+    const promptContent = await readFile(promptPath, "utf8");
+    expect(promptContent).toContain("architect role from kleiber-agents");
+    expect(promptContent).toContain("Kleiber session orchestration may be available");
+    expect(promptContent).toContain(path.join(os.homedir(), ".agents", "skills", "project-spec-utils", "references", "kleiber-ecosystem.md"));
+    expect(promptContent).toContain(".claude/agents/architect.md");
   });
 
   it("bootstraps Gemini harness + agent sessions with an initial prompt when no role flag exists", async () => {
@@ -511,7 +519,7 @@ describe("IPC handlers remediation", () => {
     expect(createInput.launch.env).toEqual({ KLEIBER_AGENT_ROLE: "architect" });
     expect(createInput.launch.prompt).toContain("architect role from kleiber-agents");
     expect(createInput.launch.prompt).toContain("Kleiber session orchestration may be available");
-    expect(createInput.launch.prompt).toContain(".agents/skills/project-spec-utils/references/kleiber-ecosystem.md");
+    expect(createInput.launch.prompt).toContain(path.join(os.homedir(), ".agents", "skills", "project-spec-utils", "references", "kleiber-ecosystem.md"));
     expect(createInput.launch.prompt).toContain(".gemini/agents/architect.md");
   });
 
@@ -832,6 +840,9 @@ describe("IPC handlers remediation", () => {
       wrapperCommand: process.execPath,
       wrapperArgs: ["/tmp/wrapper.js"],
       argsTemplate: ["--mcp", "{wrapperCommand}", "{wrapperArgsJson}"],
+      configContentTemplate:
+        '{"mcpServers":{"kleiber":{"command":{wrapperCommandJson},"args":{wrapperArgsJson},"env":{"KLEIBER_SESSION_ID":"{sessionId}","KLEIBER_PROJECT_ID":"{projectId}","KLEIBER_MCP_SOCKET_PATH":"{mcpSocketPath}","KLEIBER_MCP_DEBUG_LOG_PATH":"{mcpDebugLogPath}","ELECTRON_RUN_AS_NODE":"1"}}}}',
+      configFileName: "claude-mcp-config.json",
       envTemplate: {
         MCP_SESSION: "{sessionId}",
         MCP_PROJECT: "{projectId}",

@@ -1,6 +1,8 @@
-import { accessSync, constants as fsConstants } from "node:fs";
-import { mkdir } from "node:fs/promises";
+import { accessSync, constants as fsConstants, existsSync } from "node:fs";
+import { mkdir, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
+import YAML from "yaml";
 import { app, ipcMain, BrowserWindow, dialog } from "electron";
 import { BUNDLED_PACK_DISPLAY_NAME, IPC_CHANNELS, PRIMARY_BUNDLED_PACK_DIR, SUPPORTED_AGENT_CLIS } from "@kleiber/shared";
 import log from "electron-log";
@@ -58,7 +60,7 @@ const DEFAULT_PACK_CONFIG: AgentPackConfig = {
       orchestration: "native_subagents_or_agent_teams",
       launch_command: "claude",
       yolo_flag: "--dangerously-skip-permissions",
-      mcp_injection: "env",
+      mcp_injection: "argv",
     },
     opencode: {
       enabled: true,
@@ -79,6 +81,12 @@ const DEFAULT_PACK_CONFIG: AgentPackConfig = {
     notes: [],
   },
   agent_overrides: {
+    claude_code: {
+      mcp_args_template: ["--mcp-config", "{mcpConfigPath}"],
+      mcp_config_file_name: "claude-mcp-config.json",
+      mcp_config_content:
+        '{"mcpServers":{"kleiber":{"command":{wrapperCommandJson},"args":{wrapperArgsJson},"env":{"KLEIBER_SESSION_ID":"{sessionId}","KLEIBER_PROJECT_ID":"{projectId}","KLEIBER_MCP_SOCKET_PATH":"{mcpSocketPath}","KLEIBER_MCP_DEBUG_LOG_PATH":"{mcpDebugLogPath}","ELECTRON_RUN_AS_NODE":"1"}}}}',
+    },
     codex: {
       mcp_args_template: [
         "-c",
@@ -236,9 +244,20 @@ const CLI_ALIASES: Readonly<Record<string, AgentCli>> = {
   gemini_cli: "gemini",
 };
 
+interface ProjectPackConfigData {
+  allowedProviders: string[];
+  models: {
+    lowComplexity: { provider: string; model: string };
+    mediumComplexity: { provider: string; model: string };
+    highComplexity: { provider: string; model: string };
+  };
+  notes: string;
+}
+
 interface CreateProjectIpcPayload {
   name: string;
   directoryPath: string;
+  packConfig?: ProjectPackConfigData;
 }
 
 interface CreateSessionIpcPayload {
@@ -507,7 +526,7 @@ function buildAgentBootstrapPrompt(role: string, cli: AgentCli, mcpEnabled: bool
       ? "Kleiber session orchestration may be available in this session through the existing MCP tools."
       : "Kleiber session orchestration is disabled for this session, so do not assume MCP access.",
     "Distinguish Kleiber session orchestration from harness-native delegation features.",
-    `Before doing anything else, read .agents/skills/project-spec-utils/references/kleiber-ecosystem.md if it exists, then read ${configPath} if it exists and ${configInstruction}.`,
+    `Before doing anything else, read ${path.join(os.homedir(), ".agents", "skills", "project-spec-utils", "references", "kleiber-ecosystem.md")} if it exists, then read ${configPath} if it exists and ${configInstruction}.`,
     "If Kleiber orchestration or tool availability is uncertain, inspect local context and available capabilities before claiming support.",
     "Briefly state that the Kleiber agent context is loaded and wait for the user's task.",
   ].join(" ");
@@ -608,7 +627,20 @@ export async function resolveSessionCreateOptions(
   if (role) {
     const usedRoleActivation = addRoleLaunchArgs(launchArgs, override, role);
     if (!usedRoleActivation) {
-      launchPrompt = buildAgentBootstrapPrompt(role, canonicalCli, requestedMcpEnabled);
+      const promptText = buildAgentBootstrapPrompt(role, canonicalCli, requestedMcpEnabled);
+      if (canonicalCli === "claude") {
+        // Claude Code reads positional args as file paths for initial context.
+        // The prompt file must come BEFORE --mcp-config in the arg list, otherwise
+        // Claude Code tries to parse the prompt file as a second MCP config (invalid JSON).
+        // Push into launchArgs here so MCP args are appended after it.
+        const promptDir = path.join(os.tmpdir(), "kleiber-bootstrap");
+        await mkdir(promptDir, { recursive: true });
+        const promptFile = path.join(promptDir, `${crypto.randomUUID()}.md`);
+        await writeFile(promptFile, promptText, "utf8");
+        launchArgs.push(promptFile);
+      } else {
+        launchPrompt = promptText;
+      }
     }
   }
 
@@ -671,6 +703,31 @@ function resolveMcpLaunchConfig(
   };
 }
 
+function generateProjectConfigYaml(config: ProjectPackConfigData): string {
+  const configObj = {
+    version: 1,
+    providers: {
+      allowed: config.allowedProviders,
+      disallowed: [] as string[],
+    },
+    models: {
+      defaults: {
+        low_complexity: config.models.lowComplexity,
+        medium_complexity: config.models.mediumComplexity,
+        high_complexity: config.models.highComplexity,
+      },
+      notes: config.notes.trim() ? [config.notes.trim()] : ([] as string[]),
+    },
+    harness_adapters: {} as Record<string, unknown>,
+    mcp: {
+      available: ["kleiber-local"],
+      notes: [] as string[],
+    },
+    agent_overrides: {} as Record<string, unknown>,
+  };
+  return YAML.stringify(configObj);
+}
+
 export function registerIpcHandlers(): void {
   void remoteApiServer.syncWithSettings().catch((error) => {
     log.error("Failed to initialize remote API server", error);
@@ -688,6 +745,15 @@ export function registerIpcHandlers(): void {
       log.debug("IPC: projects:create", data);
       const directoryPath = path.resolve(data.directoryPath);
       await mkdir(directoryPath, { recursive: true });
+
+      if (data.packConfig) {
+        const configPath = path.join(directoryPath, ".agent_specs", "agent_pack_config.yaml");
+        if (!existsSync(configPath)) {
+          await mkdir(path.dirname(configPath), { recursive: true });
+          await writeFile(configPath, generateProjectConfigYaml(data.packConfig), "utf8");
+        }
+      }
+
       return store.saveProject({
         id: crypto.randomUUID(),
         name: data.name,

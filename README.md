@@ -285,21 +285,12 @@ These are discovered from the bundled `kleiber-agents` skill tree and surfaced i
 │   ├── shared/            # shared types and constants
 │   └── web/               # remote browser client
 ├── e2e/                   # Playwright tests
-└── .agent_specs/          # project requirements, plans, security, UI/UX docs
 ```
 
-## Notes And Current Scope
-
-- Kleiber is local-first. The remote API is optional and off by default.
-- The remote web UI focuses on session access and terminal control, not full desktop feature parity.
-- CLI detection depends on whether the underlying command is available on the app's `PATH`.
-- The bundled role pack is first-class Kleiber functionality, not an external dependency treated as read-only.
 
 ## Additional Documentation
 
 - [`kleiber-agents/README.md`](./kleiber-agents/README.md): bundled role pack, installers, wrapper layout, and output artifacts
-- [`.agent_specs/kleiber_2_requirements_final.md`](./.agent_specs/kleiber_2_requirements_final.md): current release requirements
-- [`.agent_specs/kleiber_1_architecture.yaml`](./.agent_specs/kleiber_1_architecture.yaml): implementation architecture
 - [`COMMERCIAL_LICENSE.md`](./COMMERCIAL_LICENSE.md): plain-English summary of when a separate commercial license is required
 - [`CONTRIBUTING.md`](./CONTRIBUTING.md): inbound contribution terms for this licensing model
 

@@ -451,9 +451,11 @@ function commandExists(command: string): boolean {
         ]
       : [trimmed];
 
-  return pathEntries.some((entry) =>
+  const found = pathEntries.some((entry) =>
     candidates.some((candidate) => isExecutableFile(path.join(entry, candidate))),
   );
+  log.info(`[detect] command=${trimmed} found=${String(found)} PATH entries=${pathEntries.length}`);
+  return found;
 }
 
 function isInactiveSessionError(error: unknown): boolean {

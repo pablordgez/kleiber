@@ -1,6 +1,7 @@
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { app, BrowserWindow, Menu, session as electronSession } from "electron";
+import log from "electron-log/main";
 import { getNonMacShortcutChannel } from "./shortcuts";
 import { configureMainLogging, startSecurityEventLogging } from "./logging";
 import { registerIpcHandlers } from "./ipc/handlers";
@@ -14,17 +15,22 @@ configureMainLogging(process.env.NODE_ENV === "development");
 // apply it to the process before any binary detection happens.
 if (process.platform !== "win32") {
   const shell = process.env.SHELL ?? "/bin/bash";
+  log.info(`[path-fix] shell=${shell} inherited PATH=${process.env.PATH ?? "(unset)"}`);
   try {
-    const result = spawnSync(shell, ["-l", "-c", "echo $PATH"], {
+    const result = spawnSync(shell, ["-l", "-c", "printf '%s' \"$PATH\""], {
       encoding: "utf8",
       timeout: 3000,
     });
+    log.info(`[path-fix] spawn status=${String(result.status)} error=${String(result.error)} stderr=${result.stderr?.trim()}`);
     const shellPath = result.stdout?.trim();
     if (shellPath) {
       process.env.PATH = shellPath;
+      log.info(`[path-fix] updated PATH=${shellPath}`);
+    } else {
+      log.warn("[path-fix] login shell returned empty PATH, keeping inherited value");
     }
-  } catch {
-    // Non-fatal: fall back to the inherited PATH
+  } catch (err) {
+    log.warn(`[path-fix] failed to spawn login shell: ${String(err)}`);
   }
 }
 

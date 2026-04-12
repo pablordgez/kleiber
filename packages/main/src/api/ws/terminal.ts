@@ -292,7 +292,7 @@ export async function registerTerminalWebSocketRoutes(
           }
 
           try {
-            options.sessionManager.sendToSession(sessionId, input);
+            options.sessionManager.sendToSession(sessionId, input, { source: "remote_ws" });
             sendJson(socket, { type: "accepted", sessionId, length: input.length });
           } catch (error) {
             sendJson(socket, {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { parseAgentPackConfigYaml } from "./agent-pack-config";
+import { mergeAgentPackConfig, parseAgentPackConfigYaml } from "./agent-pack-config";
 
 const EXAMPLE_CONFIG = `version: 1
 providers:
@@ -72,5 +72,41 @@ mcp:
 agent_overrides: {}
 `),
     ).toThrow(/version/);
+  });
+
+  it("merges missing harness metadata from defaults", () => {
+    const defaults = parseAgentPackConfigYaml(EXAMPLE_CONFIG);
+    const projectConfig = parseAgentPackConfigYaml(`version: 1
+providers:
+  allowed:
+    - openai
+  disallowed: []
+models:
+  defaults:
+    low_complexity:
+      provider: openai
+      model: gpt-5.4-mini
+    medium_complexity:
+      provider: anthropic
+      model: claude-sonnet
+    high_complexity:
+      provider: openai
+      model: gpt-5.4
+  notes: []
+harness_adapters:
+  codex:
+    enabled: true
+    orchestration: native_subagents
+    launch_command: codex
+mcp:
+  available: []
+  notes: []
+agent_overrides: {}
+`);
+
+    const merged = mergeAgentPackConfig(defaults, projectConfig);
+
+    expect(merged.harness_adapters.codex?.yolo_flag).toBe("--yolo");
+    expect(merged.harness_adapters.codex?.mcp_injection).toBe("argv");
   });
 });

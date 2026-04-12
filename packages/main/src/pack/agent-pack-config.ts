@@ -126,3 +126,77 @@ export function parseAgentPackConfigYaml(content: string): AgentPackConfig {
     agent_overrides: expectRecord(root.agent_overrides ?? {}, "agent_overrides"),
   };
 }
+
+export function mergeAgentPackConfig(
+  defaultConfig: AgentPackConfig,
+  projectConfig: AgentPackConfig | null,
+): AgentPackConfig {
+  if (!projectConfig) {
+    return defaultConfig;
+  }
+
+  const mergedAgentOverrides = Object.fromEntries(
+    [...new Set([
+      ...Object.keys(defaultConfig.agent_overrides),
+      ...Object.keys(projectConfig.agent_overrides),
+    ])].map((key) => [
+      key,
+      mergeUnknownRecord(defaultConfig.agent_overrides[key], projectConfig.agent_overrides[key]),
+    ]),
+  );
+
+  const mergedHarnessAdapters = Object.fromEntries(
+    [...new Set([
+      ...Object.keys(defaultConfig.harness_adapters),
+      ...Object.keys(projectConfig.harness_adapters),
+    ])].map((key) => [
+      key,
+      mergeUnknownRecord(defaultConfig.harness_adapters[key], projectConfig.harness_adapters[key]),
+    ]),
+  );
+
+  return {
+    ...defaultConfig,
+    ...projectConfig,
+    providers: {
+      ...defaultConfig.providers,
+      ...projectConfig.providers,
+    },
+    models: {
+      ...defaultConfig.models,
+      ...projectConfig.models,
+      defaults: {
+        ...defaultConfig.models.defaults,
+        ...projectConfig.models.defaults,
+      },
+      notes: projectConfig.models.notes,
+    },
+    mcp: {
+      ...defaultConfig.mcp,
+      ...projectConfig.mcp,
+    },
+    harness_adapters: mergedHarnessAdapters as AgentPackConfig["harness_adapters"],
+    agent_overrides: {
+      ...mergedAgentOverrides,
+    },
+  };
+}
+
+function mergeUnknownRecord(
+  baseValue: unknown,
+  overrideValue: unknown,
+): Record<string, unknown> {
+  const base =
+    baseValue && typeof baseValue === "object" && !Array.isArray(baseValue)
+      ? (baseValue as Record<string, unknown>)
+      : {};
+  const override =
+    overrideValue && typeof overrideValue === "object" && !Array.isArray(overrideValue)
+      ? (overrideValue as Record<string, unknown>)
+      : {};
+
+  return {
+    ...base,
+    ...override,
+  };
+}

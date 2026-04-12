@@ -7,7 +7,12 @@ import type {
   SessionType,
   UUID,
 } from "@kleiber/shared";
-import type { McpLaunchConfig, ManagedSessionRecord, SessionManagerEvents } from "../sessions/session-manager";
+import type {
+  McpLaunchConfig,
+  ManagedSessionRecord,
+  SendSessionInputOptions,
+  SessionManagerEvents,
+} from "../sessions/session-manager";
 
 export interface RemoteApiStore {
   listProjects(): Project[];
@@ -47,7 +52,7 @@ export interface RemoteApiSessionManager {
   listSessions(projectId?: UUID): ManagedSessionRecord[];
   readSession(sessionId: UUID, options?: { limit?: number; plainText?: boolean }): string[];
   resizeSession(sessionId: UUID, options: { columns: number; rows: number }): void;
-  sendToSession(sessionId: UUID, input: string): void;
+  sendToSession(sessionId: UUID, input: string, options?: SendSessionInputOptions): void;
   on<Event extends keyof SessionManagerEvents>(
     eventName: Event,
     listener: (payload: SessionManagerEvents[Event]) => void,

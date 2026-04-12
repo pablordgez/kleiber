@@ -1,8 +1,8 @@
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   SessionManager,
@@ -12,6 +12,10 @@ import {
   type PtyFactory,
   type PtyProcess,
 } from "./session-manager";
+
+const PROGRAMMATIC_CHUNK_THRESHOLD = 512;
+const PROGRAMMATIC_CHUNK_SIZE = 128;
+const PROGRAMMATIC_CHUNK_DELAY_MS = 20;
 
 class FakePty implements PtyProcess {
   readonly #dataListeners = new Set<(data: string) => void>();
@@ -113,6 +117,18 @@ function createManager(factory: PtyFactory, outputBufferSize = 5): SessionManage
   });
 }
 
+function splitProgrammaticPrompt(text: string): string[] {
+  if (text.length < PROGRAMMATIC_CHUNK_THRESHOLD) {
+    return [text];
+  }
+
+  const chunks: string[] = [];
+  for (let index = 0; index < text.length; index += PROGRAMMATIC_CHUNK_SIZE) {
+    chunks.push(text.slice(index, index + PROGRAMMATIC_CHUNK_SIZE));
+  }
+  return chunks;
+}
+
 class FakeMcpWrapperFactory {
   readonly created: Array<{ sessionId: string; projectId: string; dispose: ReturnType<typeof vi.fn> }> = [];
   #nextPid = 9_000;
@@ -131,6 +147,10 @@ class FakeMcpWrapperFactory {
 }
 
 describe("SessionManager", () => {
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 it("createSession transitions to running, forwards input, and delegates resize", async () => {
   const fakeFactory = new FakePtyFactory();
   const manager = createManager(fakeFactory.factory);
@@ -153,6 +173,319 @@ it("createSession transitions to running, forwards input, and delegates resize",
   expect(updates).toEqual(["running"]);
   expect(pty?.writes).toEqual(["echo hello\n"]);
   expect(pty?.resizeCalls).toEqual([{ columns: 140, rows: 40 }]);
+});
+
+it("logs the source of PTY writes", async () => {
+  const fakeFactory = new FakePtyFactory();
+  const workingDirectory = await mkdtemp(path.join(os.tmpdir(), "kleiber-session-manager-"));
+  const manager = createManager(fakeFactory.factory);
+
+  const session = await manager.createSession({
+    projectId: "project-1",
+    workingDirectory,
+  });
+
+  manager.sendToSession(session.id, "echo hello\r", { source: "mcp" });
+
+  const logPath = path.join(workingDirectory, ".kleiber", "logs", "mcp", `${session.id}.log`);
+  const logContents = await readFile(logPath, "utf8");
+  expect(logContents).toContain("pty.write");
+  expect(logContents).toContain("\"source\":\"mcp\"");
+  expect(logContents).toContain("\"line_ending\":\"cr\"");
+});
+
+it("defers early Codex MCP input until startup output goes quiet and submits with kitty Enter", async () => {
+  vi.useFakeTimers();
+  const fakeFactory = new FakePtyFactory();
+  const manager = createManager(fakeFactory.factory);
+
+  const session = await manager.createSession({
+    projectId: "project-1",
+    type: "agent",
+    cli: "codex",
+    workingDirectory: "/tmp",
+    launch: {
+      command: "codex",
+      args: [],
+      env: {},
+    },
+  });
+
+  const pty = fakeFactory.created[0];
+  pty?.emitData("Booting MCP server: codex_apps\n");
+
+  manager.sendToSession(session.id, "hello from parent\r", { source: "mcp" });
+  expect(pty?.writes).toEqual([]);
+
+  vi.advanceTimersByTime(1_000);
+  expect(pty?.writes).toEqual([]);
+
+  pty?.emitData("still booting\n");
+  // Quiet period (4 s) would fire at t=5000; min-elapsed (5 s) also at t=5000
+  vi.advanceTimersByTime(3_999);
+  expect(pty?.writes).toEqual([]);
+
+  vi.advanceTimersByTime(1);
+  expect(pty?.writes).toEqual(["hello from parent"]);
+
+  vi.advanceTimersByTime(99);
+  expect(pty?.writes).toEqual(["hello from parent"]);
+
+  vi.advanceTimersByTime(1);
+  expect(pty?.writes).toEqual(["hello from parent", "\u001B[13u"]);
+});
+
+it("stages Codex MCP submit so kitty Enter is sent after the prompt text", async () => {
+  vi.useFakeTimers();
+  const fakeFactory = new FakePtyFactory();
+  const manager = createManager(fakeFactory.factory);
+
+  const session = await manager.createSession({
+    projectId: "project-1",
+    type: "agent",
+    cli: "codex",
+    workingDirectory: "/tmp",
+    launch: {
+      command: "codex",
+      args: [],
+      env: {},
+    },
+  });
+
+  vi.advanceTimersByTime(30_001);
+
+  manager.sendToSession(session.id, "summarize repo state\r", { source: "mcp" });
+
+  const pty = fakeFactory.created[0];
+  expect(pty?.writes).toEqual(["summarize repo state"]);
+
+  vi.advanceTimersByTime(99);
+  expect(pty?.writes).toEqual(["summarize repo state"]);
+
+  vi.advanceTimersByTime(1);
+  expect(pty?.writes).toEqual(["summarize repo state", "\u001B[13u"]);
+});
+
+it("streams large Codex MCP prompts in chunks before sending kitty Enter", async () => {
+  vi.useFakeTimers();
+  const fakeFactory = new FakePtyFactory();
+  const manager = createManager(fakeFactory.factory);
+
+  const session = await manager.createSession({
+    projectId: "project-1",
+    type: "agent",
+    cli: "codex",
+    workingDirectory: "/tmp",
+    launch: {
+      command: "codex",
+      args: [],
+      env: {},
+    },
+  });
+
+  vi.advanceTimersByTime(30_001);
+
+  const longPrompt = `${"x".repeat(1_200)}\r`;
+  manager.sendToSession(session.id, longPrompt, { source: "mcp" });
+
+  const pty = fakeFactory.created[0];
+  const expectedChunks = splitProgrammaticPrompt("x".repeat(1_200));
+  const submitDelayMs = (expectedChunks.length - 1) * PROGRAMMATIC_CHUNK_DELAY_MS + 750;
+  expect(pty?.writes).toEqual([expectedChunks[0]]);
+
+  vi.advanceTimersByTime((expectedChunks.length - 1) * PROGRAMMATIC_CHUNK_DELAY_MS);
+  expect(pty?.writes).toEqual(expectedChunks);
+
+  vi.advanceTimersByTime(submitDelayMs - (expectedChunks.length - 1) * PROGRAMMATIC_CHUNK_DELAY_MS - 1);
+  expect(pty?.writes).toEqual(expectedChunks);
+
+  vi.advanceTimersByTime(1);
+  expect(pty?.writes).toEqual([...expectedChunks, "\u001B[13u"]);
+});
+
+it("automatically sends one empty fallback submit when Codex stays silent after a long MCP prompt", async () => {
+  vi.useFakeTimers();
+  const fakeFactory = new FakePtyFactory();
+  const manager = createManager(fakeFactory.factory);
+
+  const session = await manager.createSession({
+    projectId: "project-1",
+    type: "agent",
+    cli: "codex",
+    workingDirectory: "/tmp",
+    launch: {
+      command: "codex",
+      args: [],
+      env: {},
+    },
+  });
+
+  vi.advanceTimersByTime(30_001);
+
+  const longPrompt = `${"x".repeat(1_200)}\r`;
+  manager.sendToSession(session.id, longPrompt, { source: "mcp" });
+
+  const pty = fakeFactory.created[0];
+  const expectedChunks = splitProgrammaticPrompt("x".repeat(1_200));
+  const submitDelayMs = (expectedChunks.length - 1) * PROGRAMMATIC_CHUNK_DELAY_MS + 750;
+  expect(pty?.writes).toEqual([expectedChunks[0]]);
+
+  vi.advanceTimersByTime(submitDelayMs);
+  expect(pty?.writes).toEqual([...expectedChunks, "\u001B[13u"]);
+
+  vi.advanceTimersByTime(9_999);
+  expect(pty?.writes).toEqual([...expectedChunks, "\u001B[13u"]);
+
+  vi.advanceTimersByTime(1);
+  expect(pty?.writes).toEqual([...expectedChunks, "\u001B[13u", "\u001B[13u"]);
+});
+
+it("waits for the echoed prompt tail before sending the fallback submit", async () => {
+  vi.useFakeTimers();
+  const fakeFactory = new FakePtyFactory();
+  const manager = createManager(fakeFactory.factory);
+
+  const session = await manager.createSession({
+    projectId: "project-1",
+    type: "agent",
+    cli: "codex",
+    workingDirectory: "/tmp",
+    launch: {
+      command: "codex",
+      args: [],
+      env: {},
+    },
+  });
+
+  vi.advanceTimersByTime(30_001);
+
+  const longPrompt = `${"x".repeat(1_200)}\r`;
+  manager.sendToSession(session.id, longPrompt, { source: "mcp" });
+
+  const pty = fakeFactory.created[0];
+  const expectedChunks = splitProgrammaticPrompt("x".repeat(1_200));
+  const submitDelayMs = (expectedChunks.length - 1) * PROGRAMMATIC_CHUNK_DELAY_MS + 750;
+  vi.advanceTimersByTime(submitDelayMs);
+  expect(pty?.writes).toEqual([...expectedChunks, "\u001B[13u"]);
+
+  pty?.emitData("x".repeat(60));
+  vi.advanceTimersByTime(2_000);
+  expect(pty?.writes).toEqual([...expectedChunks, "\u001B[13u"]);
+
+  pty?.emitData("x".repeat(200));
+  vi.advanceTimersByTime(999);
+  expect(pty?.writes).toEqual([...expectedChunks, "\u001B[13u"]);
+
+  vi.advanceTimersByTime(1);
+  expect(pty?.writes).toEqual([...expectedChunks, "\u001B[13u", "\u001B[13u"]);
+});
+
+it("forces the fallback submit after a bounded wait when Codex redraws without exposing the prompt tail", async () => {
+  vi.useFakeTimers();
+  const fakeFactory = new FakePtyFactory();
+  const manager = createManager(fakeFactory.factory);
+
+  const session = await manager.createSession({
+    projectId: "project-1",
+    type: "agent",
+    cli: "codex",
+    workingDirectory: "/tmp",
+    launch: {
+      command: "codex",
+      args: [],
+      env: {},
+    },
+  });
+
+  vi.advanceTimersByTime(30_001);
+
+  manager.sendToSession(session.id, `${"x".repeat(3_800)}\r`, { source: "mcp" });
+
+  const pty = fakeFactory.created[0];
+  const expectedChunks = splitProgrammaticPrompt("x".repeat(3_800));
+  const submitDelayMs = (expectedChunks.length - 1) * PROGRAMMATIC_CHUNK_DELAY_MS + 750;
+  vi.advanceTimersByTime(submitDelayMs);
+  expect(pty?.writes).toEqual([...expectedChunks, "\u001B[13u"]);
+
+  pty?.emitData("\u001B[2J\u001B[Hscreen redraw without echoed prompt tail");
+  vi.advanceTimersByTime(13_999);
+  expect(pty?.writes).toEqual([...expectedChunks, "\u001B[13u"]);
+
+  vi.advanceTimersByTime(1);
+  expect(pty?.writes).toEqual([...expectedChunks, "\u001B[13u", "\u001B[13u"]);
+});
+
+it("cancels the fallback submit once Codex reports that work started", async () => {
+  vi.useFakeTimers();
+  const fakeFactory = new FakePtyFactory();
+  const manager = createManager(fakeFactory.factory);
+
+  const session = await manager.createSession({
+    projectId: "project-1",
+    type: "agent",
+    cli: "codex",
+    workingDirectory: "/tmp",
+    launch: {
+      command: "codex",
+      args: [],
+      env: {},
+    },
+  });
+
+  vi.advanceTimersByTime(30_001);
+
+  manager.sendToSession(session.id, `${"x".repeat(1_200)}\r`, { source: "mcp" });
+
+  const pty = fakeFactory.created[0];
+  const expectedChunks = splitProgrammaticPrompt("x".repeat(1_200));
+  const submitDelayMs = (expectedChunks.length - 1) * PROGRAMMATIC_CHUNK_DELAY_MS + 750;
+  vi.advanceTimersByTime(submitDelayMs);
+  expect(pty?.writes).toEqual([...expectedChunks, "\u001B[13u"]);
+
+  pty?.emitData("•Working(0s • esc to interrupt)");
+  vi.advanceTimersByTime(10_000);
+  expect(pty?.writes).toEqual([...expectedChunks, "\u001B[13u"]);
+});
+
+it.each([
+  { cli: "claude", command: "claude" },
+  { cli: "opencode", command: "opencode" },
+  { cli: "gemini", command: "gemini" },
+])("chunks large %s MCP prompts before sending Enter", async ({ cli, command }) => {
+  vi.useFakeTimers();
+  const fakeFactory = new FakePtyFactory();
+  const manager = createManager(fakeFactory.factory);
+
+  const session = await manager.createSession({
+    projectId: "project-1",
+    type: "agent",
+    cli,
+    workingDirectory: "/tmp",
+    launch: {
+      command,
+      args: [],
+      env: {},
+    },
+  });
+
+  vi.advanceTimersByTime(30_001);
+
+  const longPrompt = `${"x".repeat(1_200)}\r`;
+  manager.sendToSession(session.id, longPrompt, { source: "mcp" });
+
+  const pty = fakeFactory.created[0];
+  const expectedChunks = splitProgrammaticPrompt("x".repeat(1_200));
+  const submitDelayMs = (expectedChunks.length - 1) * PROGRAMMATIC_CHUNK_DELAY_MS + 750;
+  expect(pty?.writes).toEqual([expectedChunks[0]]);
+
+  vi.advanceTimersByTime((expectedChunks.length - 1) * PROGRAMMATIC_CHUNK_DELAY_MS);
+  expect(pty?.writes).toEqual(expectedChunks);
+
+  vi.advanceTimersByTime(submitDelayMs - (expectedChunks.length - 1) * PROGRAMMATIC_CHUNK_DELAY_MS - 1);
+  expect(pty?.writes).toEqual(expectedChunks);
+
+  vi.advanceTimersByTime(1);
+  expect(pty?.writes).toEqual([...expectedChunks, "\r"]);
 });
 
 it("killSession cascades through descendants", async () => {

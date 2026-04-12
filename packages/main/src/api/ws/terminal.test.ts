@@ -373,7 +373,9 @@ describe("terminal websocket routes", () => {
       sessionId: "session-1",
       length: 4,
     });
-    expect(runtime.sessionManager.sendToSession).toHaveBeenCalledWith("session-1", "pwd\n");
+    expect(runtime.sessionManager.sendToSession).toHaveBeenCalledWith("session-1", "pwd\n", {
+      source: "remote_ws",
+    });
   });
 
   it("closes unauthenticated sockets after the configured timeout", async () => {

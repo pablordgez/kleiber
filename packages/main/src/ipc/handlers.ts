@@ -23,6 +23,7 @@ import { hashPassword } from "../api/auth";
 import type { RemoteApiPackManager, RemoteApiStore } from "../api/types";
 import { SessionManager, type McpLaunchConfig } from "../sessions/session-manager";
 import { AgentPackManager } from "../pack/agent-pack-manager";
+import { mergeAgentPackConfig } from "../pack/agent-pack-config";
 import { resolveHarnessAdapter } from "../pack/harness-adapter";
 import { notifySessionExitIfUnfocused } from "../notifications";
 
@@ -178,6 +179,7 @@ const remoteApiServer = new RemoteApiServerController({
 // sessions while keeping perceived latency well below one frame.
 const OUTPUT_BATCH_INTERVAL_MS = 16;
 const OUTPUT_BATCH_MAX_BYTES = 64 * 1024;
+let sessionEventHandlersRegistered = false;
 
 interface OutputBatch {
   data: string;
@@ -196,46 +198,54 @@ function flushOutputBatch(sessionId: string): void {
   });
 }
 
-sessionManager.on("session-output", (payload) => {
-  const existing = outputBatches.get(payload.sessionId);
-  if (existing) {
-    clearTimeout(existing.timer);
-    existing.data += payload.chunk;
-    if (existing.data.length >= OUTPUT_BATCH_MAX_BYTES) {
-      flushOutputBatch(payload.sessionId);
-      return;
+function registerSessionEventHandlers(): void {
+  if (sessionEventHandlersRegistered) {
+    return;
+  }
+
+  sessionEventHandlersRegistered = true;
+
+  sessionManager.on("session-output", (payload) => {
+    const existing = outputBatches.get(payload.sessionId);
+    if (existing) {
+      clearTimeout(existing.timer);
+      existing.data += payload.chunk;
+      if (existing.data.length >= OUTPUT_BATCH_MAX_BYTES) {
+        flushOutputBatch(payload.sessionId);
+        return;
+      }
+      existing.timer = setTimeout(() => flushOutputBatch(payload.sessionId), OUTPUT_BATCH_INTERVAL_MS);
+    } else {
+      const timer = setTimeout(() => flushOutputBatch(payload.sessionId), OUTPUT_BATCH_INTERVAL_MS);
+      outputBatches.set(payload.sessionId, { data: payload.chunk, timer });
     }
-    existing.timer = setTimeout(() => flushOutputBatch(payload.sessionId), OUTPUT_BATCH_INTERVAL_MS);
-  } else {
-    const timer = setTimeout(() => flushOutputBatch(payload.sessionId), OUTPUT_BATCH_INTERVAL_MS);
-    outputBatches.set(payload.sessionId, { data: payload.chunk, timer });
-  }
-});
-sessionManager.on("session-exited", (payload) => {
-  BrowserWindow.getAllWindows().forEach((windowInstance) => {
-    windowInstance.webContents.send(`terminals:exit:${payload.session.id}`, payload.session.exitCode);
-    windowInstance.webContents.send(IPC_CHANNELS.sessions.updated, payload.session);
   });
-  notifySessionExitIfUnfocused(payload, BrowserWindow.getAllWindows());
-});
-sessionManager.on("session-created", (payload) => {
-  BrowserWindow.getAllWindows().forEach((windowInstance) => {
-    windowInstance.webContents.send(IPC_CHANNELS.sessions.updated, payload.session);
+  sessionManager.on("session-exited", (payload) => {
+    BrowserWindow.getAllWindows().forEach((windowInstance) => {
+      windowInstance.webContents.send(`terminals:exit:${payload.session.id}`, payload.session.exitCode);
+      windowInstance.webContents.send(IPC_CHANNELS.sessions.updated, payload.session);
+    });
+    notifySessionExitIfUnfocused(payload, BrowserWindow.getAllWindows());
   });
-});
-sessionManager.on("session-updated", (payload) => {
-  BrowserWindow.getAllWindows().forEach((windowInstance) => {
-    windowInstance.webContents.send(IPC_CHANNELS.sessions.updated, payload.session);
+  sessionManager.on("session-created", (payload) => {
+    BrowserWindow.getAllWindows().forEach((windowInstance) => {
+      windowInstance.webContents.send(IPC_CHANNELS.sessions.updated, payload.session);
+    });
   });
-});
-sessionManager.on("session-deleted", (payload) => {
-  for (const deletedSessionId of payload.deletedSessionIds) {
-    flushOutputBatch(deletedSessionId);
-  }
-  BrowserWindow.getAllWindows().forEach((windowInstance) => {
-    windowInstance.webContents.send(IPC_CHANNELS.sessions.removed, payload.deletedSessionIds);
+  sessionManager.on("session-updated", (payload) => {
+    BrowserWindow.getAllWindows().forEach((windowInstance) => {
+      windowInstance.webContents.send(IPC_CHANNELS.sessions.updated, payload.session);
+    });
   });
-});
+  sessionManager.on("session-deleted", (payload) => {
+    for (const deletedSessionId of payload.deletedSessionIds) {
+      flushOutputBatch(deletedSessionId);
+    }
+    BrowserWindow.getAllWindows().forEach((windowInstance) => {
+      windowInstance.webContents.send(IPC_CHANNELS.sessions.removed, payload.deletedSessionIds);
+    });
+  });
+}
 
 const CLI_ALIASES: Readonly<Record<string, AgentCli>> = {
   "claude-code": "claude",
@@ -378,83 +388,6 @@ function addRoleLaunchArgs(
   }
 
   return false;
-}
-
-function mergePackConfig(projectConfig: AgentPackConfig | null): AgentPackConfig {
-  if (!projectConfig) {
-    return DEFAULT_PACK_CONFIG;
-  }
-
-  const mergedAgentOverrides = Object.fromEntries(
-    [...new Set([
-      ...Object.keys(DEFAULT_PACK_CONFIG.agent_overrides),
-      ...Object.keys(projectConfig.agent_overrides),
-    ])].map((key) => [
-      key,
-      mergeUnknownRecord(
-        DEFAULT_PACK_CONFIG.agent_overrides[key],
-        projectConfig.agent_overrides[key],
-      ),
-    ]),
-  );
-
-  const mergedHarnessAdapters = Object.fromEntries(
-    [...new Set([
-      ...Object.keys(DEFAULT_PACK_CONFIG.harness_adapters),
-      ...Object.keys(projectConfig.harness_adapters),
-    ])].map((key) => [
-      key,
-      mergeUnknownRecord(
-        DEFAULT_PACK_CONFIG.harness_adapters[key],
-        projectConfig.harness_adapters[key],
-      ),
-    ]),
-  );
-
-  return {
-    ...DEFAULT_PACK_CONFIG,
-    ...projectConfig,
-    providers: {
-      ...DEFAULT_PACK_CONFIG.providers,
-      ...projectConfig.providers,
-    },
-    models: {
-      ...DEFAULT_PACK_CONFIG.models,
-      ...projectConfig.models,
-      defaults: {
-        ...DEFAULT_PACK_CONFIG.models.defaults,
-        ...projectConfig.models.defaults,
-      },
-      notes: projectConfig.models.notes,
-    },
-    mcp: {
-      ...DEFAULT_PACK_CONFIG.mcp,
-      ...projectConfig.mcp,
-    },
-    harness_adapters: mergedHarnessAdapters as AgentPackConfig["harness_adapters"],
-    agent_overrides: {
-      ...mergedAgentOverrides,
-    },
-  };
-}
-
-function mergeUnknownRecord(
-  baseValue: unknown,
-  overrideValue: unknown,
-): Record<string, unknown> {
-  const base =
-    baseValue && typeof baseValue === "object" && !Array.isArray(baseValue)
-      ? (baseValue as Record<string, unknown>)
-      : {};
-  const override =
-    overrideValue && typeof overrideValue === "object" && !Array.isArray(overrideValue)
-      ? (overrideValue as Record<string, unknown>)
-      : {};
-
-  return {
-    ...base,
-    ...override,
-  };
 }
 
 function commandExists(command: string): boolean {
@@ -612,7 +545,10 @@ export async function resolveSessionCreateOptions(
     throw new Error("Agent sessions require a supported CLI identifier.");
   }
 
-  const packConfig = mergePackConfig(await options.packManager.readProjectConfig(project.directoryPath));
+  const packConfig = mergeAgentPackConfig(
+    DEFAULT_PACK_CONFIG,
+    await options.packManager.readProjectConfig(project.directoryPath),
+  );
   const adapter = resolveHarnessAdapter(packConfig, normalizedCli);
   if (!adapter.enabled) {
     throw new Error(`CLI "${normalizedCli}" is disabled in agent_pack_config.yaml.`);
@@ -729,6 +665,8 @@ function generateProjectConfigYaml(config: ProjectPackConfigData): string {
 }
 
 export function registerIpcHandlers(): void {
+  registerSessionEventHandlers();
+
   void remoteApiServer.syncWithSettings().catch((error) => {
     log.error("Failed to initialize remote API server", error);
   });
@@ -827,7 +765,7 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(IPC_CHANNELS.sessions.send, async (_e, id: string, input: string): Promise<void> => {
     try {
-      sessionManager.sendToSession(id, input);
+      sessionManager.sendToSession(id, input, { source: "renderer_ipc" });
     } catch (e) {
       if (!isInactiveSessionError(e)) {
         log.error(e);

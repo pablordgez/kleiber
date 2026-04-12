@@ -87,7 +87,7 @@ type JsonPrimitive = string | number | boolean | null;
 type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
 
 const JSON_RPC_VERSION = "2.0";
-const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
+const DEFAULT_REQUEST_TIMEOUT_MS = resolveDefaultRequestTimeoutMs();
 
 class RpcError extends Error {
   readonly code: number;
@@ -98,6 +98,12 @@ class RpcError extends Error {
     this.code = code;
     this.data = data;
   }
+}
+
+function resolveDefaultRequestTimeoutMs(): number {
+  const rawValue = process.env.KLEIBER_MCP_REQUEST_TIMEOUT_MS;
+  const parsed = rawValue ? Number.parseInt(rawValue, 10) : Number.NaN;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 300_000;
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -607,6 +613,12 @@ export class McpStdioWrapper {
               ? "Sessions listed."
               : toolName === "kill_session"
                 ? "Session terminated."
+                : toolName === "list_available_roles"
+                  ? "Available roles listed."
+                  : toolName === "notify_parent"
+                    ? "Parent notified."
+                    : toolName === "wait_for_child_notification"
+                      ? "Child notification received."
                 : `${toolName} completed.`;
 
     const normalized: Record<string, unknown> = {

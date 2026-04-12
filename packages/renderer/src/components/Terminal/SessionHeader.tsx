@@ -14,6 +14,9 @@ export interface SessionHeaderProps {
   ancestorNames: string[];
   onKill: () => void;
   onDelete: () => void;
+  onCopySelection: () => void;
+  onSelectAll: () => void;
+  onClearTerminal: () => void;
 }
 
 export const SessionHeader: React.FC<SessionHeaderProps> = ({
@@ -22,6 +25,9 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
   ancestorNames,
   onKill,
   onDelete,
+  onCopySelection,
+  onSelectAll,
+  onClearTerminal,
 }) => {
   const sessionName = getSessionDisplayName(session);
   const breadcrumbs = [projectName, ...ancestorNames, sessionName];
@@ -128,7 +134,10 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
 
         <DropdownMenu.Root>
           <DropdownMenu.Trigger asChild>
-            <button className="text-[#666666] hover:text-[#FFFFFF] hover:bg-[#0A0A0A] p-1 rounded-lg transition-colors">
+            <button
+              aria-label="Terminal Actions"
+              className="text-[#666666] hover:text-[#FFFFFF] hover:bg-[#0A0A0A] p-1 rounded-lg transition-colors"
+            >
               <MoreHorizontal size={15} />
             </button>
           </DropdownMenu.Trigger>
@@ -137,7 +146,23 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
               className="min-w-[160px] bg-[#0A0A0A] border border-[#1C1C1C] rounded-lg p-1 z-50 shadow-xl shadow-black/50"
               sideOffset={4}
             >
-              <DropdownMenu.Item className="flex items-center px-2 py-1.5 text-[13px] text-[#FFFFFF] hover:bg-[#141414] focus:bg-[#141414] rounded-lg outline-none cursor-pointer transition-colors">
+              <DropdownMenu.Item
+                onSelect={onCopySelection}
+                className="flex items-center px-2 py-1.5 text-[13px] text-[#FFFFFF] hover:bg-[#141414] focus:bg-[#141414] rounded-lg outline-none cursor-pointer transition-colors"
+              >
+                Copy Selection
+              </DropdownMenu.Item>
+              <DropdownMenu.Item
+                onSelect={onSelectAll}
+                className="flex items-center px-2 py-1.5 text-[13px] text-[#FFFFFF] hover:bg-[#141414] focus:bg-[#141414] rounded-lg outline-none cursor-pointer transition-colors"
+              >
+                Select All
+              </DropdownMenu.Item>
+              <DropdownMenu.Separator className="h-px my-1 bg-[#1C1C1C]" />
+              <DropdownMenu.Item
+                onSelect={onClearTerminal}
+                className="flex items-center px-2 py-1.5 text-[13px] text-[#FFFFFF] hover:bg-[#141414] focus:bg-[#141414] rounded-lg outline-none cursor-pointer transition-colors"
+              >
                 Clear Terminal
               </DropdownMenu.Item>
             </DropdownMenu.Content>

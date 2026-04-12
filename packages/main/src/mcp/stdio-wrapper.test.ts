@@ -169,13 +169,16 @@ describe("McpStdioWrapper", () => {
     });
 
     const frames = extractFrames(outputData) as any[];
-    expect(frames[1]?.result.tools).toHaveLength(5);
+    expect(frames[1]?.result.tools).toHaveLength(8);
     expect(frames[1]?.result.tools.map((tool: { name: string }) => tool.name)).toEqual([
       "spawn_session",
       "send_to_session",
       "read_session",
       "list_sessions",
       "kill_session",
+      "list_available_roles",
+      "notify_parent",
+      "wait_for_child_notification",
     ]);
     expect(frames[1]?.result.version).toBe("1.2.3");
     expect(frames[1]?.result.capabilities).toEqual({ tools: { listChanged: true } });
@@ -324,6 +327,78 @@ describe("McpStdioWrapper", () => {
         yolo: false,
       });
       expect(frames[0]?.result.isError).toBe(false);
+    });
+
+    wrapper.stop();
+  });
+
+  it("normalizes notification tool payloads into MCP CallToolResult envelopes", async () => {
+    const input = new PassThrough();
+    const output = new PassThrough();
+    const bridge = new ParentBridgeFake();
+    let outputData = "";
+    output.on("data", (chunk) => {
+      outputData += String(chunk);
+    });
+
+    const wrapper = new McpStdioWrapper({
+      streams: { input, output },
+      bridge,
+      context: { sessionId: "session-parent", projectId: "project-tools" },
+    });
+    wrapper.start();
+
+    input.write(
+      encodeJsonLine({
+        jsonrpc: "2.0",
+        id: 8,
+        method: "tools/call",
+        params: {
+          name: "wait_for_child_notification",
+          arguments: {
+            child_session_id: "child-1",
+            timeout_ms: 0,
+          },
+        },
+      }),
+    );
+
+    await vi.waitFor(() => {
+      expect(bridge.sent).toHaveLength(1);
+    });
+
+    bridge.respond({
+      kind: "kleiber.mcp.response",
+      requestId: bridge.sent[0]?.requestId ?? "",
+      ok: true,
+      result: {
+        notification: {
+          kind: "child_exited",
+          child_session_id: "child-1",
+          child_session_name: "codex:architect",
+          delivered_at: "2026-04-10T12:00:00.000Z",
+          exit_code: 0,
+          signal: null,
+        },
+        timed_out: false,
+      },
+    });
+
+    await vi.waitFor(() => {
+      const frames = extractJsonLines(outputData) as any[];
+      expect(frames).toHaveLength(1);
+      expect(frames[0]?.result.content).toEqual([{ type: "text", text: "Child notification received." }]);
+      expect(frames[0]?.result.structuredContent).toEqual({
+        notification: {
+          kind: "child_exited",
+          child_session_id: "child-1",
+          child_session_name: "codex:architect",
+          delivered_at: "2026-04-10T12:00:00.000Z",
+          exit_code: 0,
+          signal: null,
+        },
+        timed_out: false,
+      });
     });
 
     wrapper.stop();

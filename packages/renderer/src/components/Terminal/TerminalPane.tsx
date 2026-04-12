@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { SessionState, Theme, UUID } from '@kleiber/shared';
 import { Terminal } from 'xterm';
 import { FitAddon } from 'xterm-addon-fit';
@@ -11,6 +11,13 @@ export interface TerminalPaneProps {
   sessionId: UUID;
   state: SessionState;
   theme: Theme;
+}
+
+export interface TerminalPaneHandle {
+  copySelection: () => boolean;
+  selectAll: () => boolean;
+  clear: () => boolean;
+  focus: () => void;
 }
 
 type TerminalTheme = {
@@ -38,7 +45,10 @@ const TERMINAL_THEMES: Record<Theme, TerminalTheme> = {
   },
 };
 
-export const TerminalPane: React.FC<TerminalPaneProps> = ({ sessionId, state, theme }) => {
+export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(function TerminalPane(
+  { sessionId, state, theme },
+  ref,
+) {
   const terminalRef = useRef<HTMLDivElement>(null);
   const term = useRef<Terminal | null>(null);
   const fitAddon = useRef<FitAddon | null>(null);
@@ -50,6 +60,45 @@ export const TerminalPane: React.FC<TerminalPaneProps> = ({ sessionId, state, th
   useEffect(() => {
     acceptsInputRef.current = state === 'running';
   }, [state]);
+
+  const copySelection = (): boolean => {
+    const selection = term.current?.getSelection() ?? '';
+    if (!selection) {
+      return false;
+    }
+
+    window.kleiber.clipboard.writeText(selection);
+    return true;
+  };
+
+  const selectAll = (): boolean => {
+    if (!term.current) {
+      return false;
+    }
+
+    term.current.selectAll();
+    term.current.focus();
+    return true;
+  };
+
+  const clearTerminal = (): boolean => {
+    if (!term.current) {
+      return false;
+    }
+
+    term.current.clear();
+    term.current.focus();
+    return true;
+  };
+
+  useImperativeHandle(ref, () => ({
+    copySelection,
+    selectAll,
+    clear: clearTerminal,
+    focus: () => {
+      term.current?.focus();
+    },
+  }));
 
   useEffect(() => {
     // If the xterm instance was lazily disposed from a previous mount, clear
@@ -74,11 +123,14 @@ export const TerminalPane: React.FC<TerminalPaneProps> = ({ sessionId, state, th
         scrollback: 10_000,
         cursorBlink: true,
         allowProposedApi: true,
+        rightClickSelectsWord: true,
       });
       term.current.attachCustomKeyEventHandler((event) => {
-        const isCopy = (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'c';
-        if (isCopy && term.current?.hasSelection()) {
-          void navigator.clipboard.writeText(term.current.getSelection()).catch(() => {});
+        const isPrimaryModifier = event.ctrlKey || event.metaKey;
+        const isCopy = isPrimaryModifier && event.key.toLowerCase() === 'c';
+        const isExplicitTerminalCopy = isPrimaryModifier && event.shiftKey && event.key.toLowerCase() === 'c';
+        if ((isCopy || isExplicitTerminalCopy) && term.current?.hasSelection()) {
+          copySelection();
           event.preventDefault();
           return false;
         }
@@ -194,10 +246,18 @@ export const TerminalPane: React.FC<TerminalPaneProps> = ({ sessionId, state, th
           <div
             ref={terminalRef}
             className="absolute inset-0 p-2"
+            onContextMenu={(event) => {
+              if (!term.current?.hasSelection()) {
+                return;
+              }
+
+              event.preventDefault();
+              copySelection();
+            }}
             onClick={() => term.current?.focus()}
           />
         </div>
       )}
     </div>
   );
-};
+});

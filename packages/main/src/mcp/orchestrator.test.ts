@@ -1,3 +1,4 @@
+import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
 import type { AgentPackConfig, Project } from "@kleiber/shared";
 
@@ -19,10 +20,28 @@ function buildPackConfig(overrides: Partial<AgentPackConfig> = {}): AgentPackCon
       notes: [],
     },
     harness_adapters: {
+      codex: {
+        enabled: true,
+        launch_command: "codex",
+        orchestration: "native_subagents",
+        yolo_flag: "--dangerously-bypass-approvals-and-sandbox",
+      },
       claude_code: {
         enabled: true,
         launch_command: "claude",
         orchestration: "native_subagents_or_agent_teams",
+        yolo_flag: "--dangerously-skip-permissions",
+      },
+      opencode: {
+        enabled: true,
+        launch_command: "opencode",
+        orchestration: "plugin_or_manual",
+      },
+      gemini_cli: {
+        enabled: true,
+        launch_command: "gemini",
+        orchestration: "experimental_subagents",
+        yolo_flag: "--yolo",
       },
     },
     mcp: {
@@ -87,6 +106,7 @@ function createHarness(options: {
   const project = options.project ?? buildProject();
   const sessions = options.sessions ?? [buildSession()];
   const sessionMap = new Map(sessions.map((session) => [session.id, session]));
+  const sessionEvents = new EventEmitter();
 
   const sessionManager = {
     createSession:
@@ -110,6 +130,7 @@ function createHarness(options: {
     readSession: options.readSession ?? vi.fn(() => []),
     sendToSession: options.sendToSession ?? vi.fn(),
     killSession: options.killSession ?? vi.fn(),
+    on: sessionEvents.on.bind(sessionEvents),
   };
 
   const store = {
@@ -136,7 +157,7 @@ function createHarness(options: {
       : {}),
   });
 
-  return { orchestrator, sessionManager, store, packManager, project, sessions };
+  return { orchestrator, sessionManager, sessionEvents, store, packManager, project, sessions };
 }
 
 describe("McpOrchestrator", () => {
@@ -159,6 +180,9 @@ describe("McpOrchestrator", () => {
       "read_session",
       "list_sessions",
       "kill_session",
+      "list_available_roles",
+      "notify_parent",
+      "wait_for_child_notification",
     ]);
 
     await expect(
@@ -196,7 +220,6 @@ describe("McpOrchestrator", () => {
         {
           name: "spawn_session",
           arguments: {
-            project_id: "project-1",
             cli: "claude",
             role: "architect",
             yolo: true,
@@ -220,8 +243,94 @@ describe("McpOrchestrator", () => {
         defaultYolo: false,
         workingDirectory: "/tmp/project-1/subdir",
         role: "architect",
+        launch: expect.objectContaining({
+          args: [],
+        }),
       }),
     );
+  });
+
+  it("passes harness YOLO flags for spawned sessions when effective yolo is true", async () => {
+    const rootSession = buildSession({ yolo: true });
+    const cases = [
+      {
+        cli: "claude",
+        harness_adapters: {
+          claude_code: {
+            enabled: true,
+            launch_command: "claude",
+            orchestration: "native_subagents_or_agent_teams",
+          },
+        },
+        expectedFlag: "--dangerously-skip-permissions",
+      },
+      {
+        cli: "codex",
+        harness_adapters: {
+          codex: {
+            enabled: true,
+            launch_command: "codex",
+            orchestration: "native_subagents",
+          },
+        },
+        expectedFlag: "--dangerously-bypass-approvals-and-sandbox",
+      },
+      {
+        cli: "gemini",
+        harness_adapters: {
+          gemini_cli: {
+            enabled: true,
+            launch_command: "gemini",
+            orchestration: "experimental_subagents",
+          },
+        },
+        expectedFlag: "--yolo",
+      },
+    ] as const;
+
+    for (const testCase of cases) {
+      const createSession = vi.fn(async (input) =>
+        buildSession({
+          id: `child-${testCase.cli}`,
+          name: input.name ?? `${testCase.cli}-child`,
+          parentSessionId: input.parentSessionId,
+          projectId: input.projectId,
+          yolo: true,
+        }),
+      );
+      const { orchestrator, sessionManager } = createHarness({
+        sessions: [rootSession],
+        createSession,
+        projectConfig: buildPackConfig({
+          harness_adapters: testCase.harness_adapters,
+        }),
+      });
+
+      await expect(
+        orchestrator.callTool(
+          {
+            name: "spawn_session",
+            arguments: {
+              cli: testCase.cli,
+              yolo: true,
+            },
+          },
+          { sessionId: "session-root", projectId: "project-1" },
+        ),
+      ).resolves.toEqual({
+        session_id: `child-${testCase.cli}`,
+        name: `${testCase.cli}-child`,
+        yolo: true,
+      });
+
+      expect(sessionManager.createSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          launch: expect.objectContaining({
+            args: [testCase.expectedFlag],
+          }),
+        }),
+      );
+    }
   });
 
   it("rejects spawn_session schema violations and unsafe working directories", async () => {
@@ -283,7 +392,7 @@ describe("McpOrchestrator", () => {
         },
         { sessionId: "session-root", projectId: "project-1" },
       ),
-    ).rejects.toThrow(/limited to the calling session's project/);
+    ).rejects.toThrow(/Omit project_id to use the current project automatically/);
 
     const { orchestrator: disabledCli } = createHarness({
       projectConfig: buildPackConfig({
@@ -471,7 +580,7 @@ describe("McpOrchestrator", () => {
         { sessionId: "session-root", projectId: "project-1" },
       ),
     ).resolves.toEqual({ success: true });
-    expect(sendToSession).toHaveBeenCalledWith("session-running", "pwd\n");
+    expect(sendToSession).toHaveBeenCalledWith("session-running", "pwd\r", { source: "mcp" });
 
     await expect(
       orchestrator.callTool(
@@ -498,6 +607,83 @@ describe("McpOrchestrator", () => {
         { sessionId: "session-root", projectId: "project-1" },
       ),
     ).rejects.toThrow(/Cross-project/);
+  });
+
+  it("auto-submits send_to_session input with Enter unless submit=false is passed", async () => {
+    const running = buildSession({ id: "session-running", state: "running" });
+    const sendToSession = vi.fn();
+    const { orchestrator } = createHarness({
+      sessions: [buildSession(), running],
+      sendToSession,
+    });
+
+    await expect(
+      orchestrator.callTool(
+        {
+          name: "send_to_session",
+          arguments: {
+            session_id: "session-running",
+            text: "Summarize the repo state",
+          },
+        },
+        { sessionId: "session-root", projectId: "project-1" },
+      ),
+    ).resolves.toEqual({ success: true });
+
+    await expect(
+      orchestrator.callTool(
+        {
+          name: "send_to_session",
+          arguments: {
+            session_id: "session-running",
+            text: "partial input",
+            submit: false,
+          },
+        },
+        { sessionId: "session-root", projectId: "project-1" },
+      ),
+    ).resolves.toEqual({ success: true });
+
+    expect(sendToSession).toHaveBeenNthCalledWith(1, "session-running", "Summarize the repo state\r", { source: "mcp" });
+    expect(sendToSession).toHaveBeenNthCalledWith(2, "session-running", "partial input", { source: "mcp" });
+  });
+
+  it("normalizes trailing newlines to Enter when submit=true", async () => {
+    const running = buildSession({ id: "session-running", state: "running" });
+    const sendToSession = vi.fn();
+    const { orchestrator } = createHarness({
+      sessions: [buildSession(), running],
+      sendToSession,
+    });
+
+    await expect(
+      orchestrator.callTool(
+        {
+          name: "send_to_session",
+          arguments: {
+            session_id: "session-running",
+            text: "line with newline\n",
+          },
+        },
+        { sessionId: "session-root", projectId: "project-1" },
+      ),
+    ).resolves.toEqual({ success: true });
+
+    await expect(
+      orchestrator.callTool(
+        {
+          name: "send_to_session",
+          arguments: {
+            session_id: "session-running",
+            text: "line with crlf\r\n",
+          },
+        },
+        { sessionId: "session-root", projectId: "project-1" },
+      ),
+    ).resolves.toEqual({ success: true });
+
+    expect(sendToSession).toHaveBeenNthCalledWith(1, "session-running", "line with newline\r", { source: "mcp" });
+    expect(sendToSession).toHaveBeenNthCalledWith(2, "session-running", "line with crlf\r", { source: "mcp" });
   });
 
   it("returns plain and raw read_session payloads and validates input schemas", async () => {
@@ -573,6 +759,7 @@ describe("McpOrchestrator", () => {
         { sessionId: "session-root", projectId: "project-1" },
       ),
     ).resolves.toEqual({
+      project_id: "project-1",
       sessions: [
         {
           session_id: "project-1-one",
@@ -595,6 +782,116 @@ describe("McpOrchestrator", () => {
       ],
     });
     expect(listSessions).toHaveBeenCalledWith("project-1");
+  });
+
+  it("lists available roles for role validation before spawning", async () => {
+    const { orchestrator } = createHarness({ roles: ["architect", "task-planner"] });
+
+    await expect(
+      orchestrator.callTool(
+        {
+          name: "list_available_roles",
+          arguments: {},
+        },
+        { sessionId: "session-root", projectId: "project-1" },
+      ),
+    ).resolves.toEqual({
+      roles: ["architect", "task-planner"],
+    });
+  });
+
+  it("lets subsessions notify their parent and lets parents wait without polling", async () => {
+    const child = buildSession({
+      id: "session-child",
+      name: "claude:architect",
+      parentSessionId: "session-root",
+    });
+    const { orchestrator } = createHarness({
+      sessions: [buildSession(), child],
+    });
+
+    await expect(
+      orchestrator.callTool(
+        {
+          name: "notify_parent",
+          arguments: {
+            text: "Task complete. Tests passed.",
+          },
+        },
+        { sessionId: "session-child", projectId: "project-1" },
+      ),
+    ).resolves.toEqual({
+      delivered: true,
+      parent_session_id: "session-root",
+    });
+
+    await expect(
+      orchestrator.callTool(
+        {
+          name: "wait_for_child_notification",
+          arguments: {
+            child_session_id: "session-child",
+            timeout_ms: 0,
+          },
+        },
+        { sessionId: "session-root", projectId: "project-1" },
+      ),
+    ).resolves.toEqual({
+      notification: {
+        kind: "child_message",
+        child_session_id: "session-child",
+        child_session_name: "claude:architect",
+        delivered_at: expect.any(String),
+        message: "Task complete. Tests passed.",
+      },
+      timed_out: false,
+    });
+  });
+
+  it("queues child exit notifications so parents can wait on execution status changes", async () => {
+    const child = buildSession({
+      id: "session-child",
+      name: "claude:architect",
+      parentSessionId: "session-root",
+      exitCode: 0,
+      signal: null,
+    });
+    const { orchestrator, sessionEvents } = createHarness({
+      sessions: [buildSession(), child],
+    });
+
+    sessionEvents.emit("session-exited", {
+      session: {
+        ...child,
+        state: "exited",
+        exitCode: 0,
+        signal: null,
+      },
+      previousState: "running",
+    });
+
+    await expect(
+      orchestrator.callTool(
+        {
+          name: "wait_for_child_notification",
+          arguments: {
+            child_session_id: "session-child",
+            timeout_ms: 0,
+          },
+        },
+        { sessionId: "session-root", projectId: "project-1" },
+      ),
+    ).resolves.toEqual({
+      notification: {
+        kind: "child_exited",
+        child_session_id: "session-child",
+        child_session_name: "claude:architect",
+        delivered_at: expect.any(String),
+        exit_code: 0,
+        signal: null,
+      },
+      timed_out: false,
+    });
   });
 
   it("kills descendant sessions, but blocks self-kill and validates tool input", async () => {

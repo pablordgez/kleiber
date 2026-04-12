@@ -1,11 +1,11 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { AppSettings, Session, Theme, UUID } from '@kleiber/shared';
 import { useAppStore } from './store/useAppStore';
 import { ProjectSidebar } from './components/Sidebar/ProjectSidebar';
 import { AgentPackBanner } from './components/AgentPackBanner';
 import { ProjectOverview } from './components/ProjectOverview';
 import { SessionHeader } from './components/Terminal/SessionHeader';
-import { TerminalPane } from './components/Terminal/TerminalPane';
+import { TerminalPane, type TerminalPaneHandle } from './components/Terminal/TerminalPane';
 import { NewSessionDialog } from './components/Dialogs/NewSessionDialog';
 import { SettingsPanel } from './components/Settings/SettingsPanel';
 
@@ -38,6 +38,7 @@ export const App: React.FC = () => {
   const [isNewProjectOpen, setIsNewProjectOpen] = useState(false);
   const [newSessionProjectId, setNewSessionProjectId] = useState<UUID | null>(null);
   const [newSessionParentId, setNewSessionParentId] = useState<UUID | null>(null);
+  const terminalPaneRef = useRef<TerminalPaneHandle | null>(null);
 
   useEffect(() => {
     applyTheme(settings?.theme ?? 'dark');
@@ -224,8 +225,18 @@ export const App: React.FC = () => {
                   .delete(selectedSession.id)
                   .catch((err: unknown) => console.error('Failed to delete session', err))
               }
+              onCopySelection={() => {
+                terminalPaneRef.current?.copySelection();
+              }}
+              onSelectAll={() => {
+                terminalPaneRef.current?.selectAll();
+              }}
+              onClearTerminal={() => {
+                terminalPaneRef.current?.clear();
+              }}
             />
             <TerminalPane
+              ref={terminalPaneRef}
               sessionId={selectedSession.id}
               state={selectedSession.state}
               theme={settings?.theme ?? 'dark'}

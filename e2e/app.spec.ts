@@ -72,9 +72,8 @@ async function createSession(page: Page, projectName: string): Promise<void> {
   const dialog = page.getByRole('dialog');
   await expect(dialog).toBeVisible();
 
-  // Fill the first text input in the dialog (agent/command field).
-  await dialog.locator('input[type="text"]').first().fill('claude');
-  await page.getByRole('button', { name: /start session/i }).click();
+  await page.getByLabel('Name').fill('E2E Session');
+  await page.getByRole('button', { name: /create session/i }).click();
 
   await expect(dialog).not.toBeVisible({ timeout: 10_000 });
 }
@@ -199,8 +198,8 @@ test.describe('Kleiber Electron app', () => {
 
     const dialog = page.getByRole('dialog');
     await expect(dialog).toBeVisible();
-    await dialog.locator('input[type="text"]').first().fill('claude');
-    await page.getByRole('button', { name: /start session/i }).click();
+    await page.getByLabel('Name').fill('Nested E2E Session');
+    await page.getByRole('button', { name: /create session/i }).click();
     await expect(dialog).not.toBeVisible({ timeout: 10_000 });
 
     // There should now be 2 session items.

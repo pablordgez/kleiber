@@ -32,7 +32,7 @@ export const SPAWN_SESSION_SCHEMA: JsonSchema = {
     yolo: { type: "boolean" },
     working_dir: { type: "string", minLength: 1 },
   },
-  required: ["project_id", "cli"],
+  required: ["cli"],
   additionalProperties: false,
 };
 
@@ -41,6 +41,7 @@ export const SEND_TO_SESSION_SCHEMA: JsonSchema = {
   properties: {
     session_id: { type: "string", minLength: 1 },
     text: { type: "string" },
+    submit: { type: "boolean" },
   },
   required: ["session_id", "text"],
   additionalProperties: false,
@@ -74,15 +75,39 @@ export const KILL_SESSION_SCHEMA: JsonSchema = {
   additionalProperties: false,
 };
 
+export const LIST_AVAILABLE_ROLES_SCHEMA: JsonSchema = {
+  type: "object",
+  properties: {},
+  additionalProperties: false,
+};
+
+export const NOTIFY_PARENT_SCHEMA: JsonSchema = {
+  type: "object",
+  properties: {
+    text: { type: "string", minLength: 1 },
+  },
+  required: ["text"],
+  additionalProperties: false,
+};
+
+export const WAIT_FOR_CHILD_NOTIFICATION_SCHEMA: JsonSchema = {
+  type: "object",
+  properties: {
+    child_session_id: { type: "string", minLength: 1 },
+    timeout_ms: { type: "integer", minimum: 0, maximum: 300000 },
+  },
+  additionalProperties: false,
+};
+
 export const MCP_TOOL_DEFINITIONS: readonly McpToolSchema[] = [
   {
     name: "spawn_session",
-    description: "Spawn a new sub-session under the calling session.",
+    description: "Spawn a new sub-session under the calling session. Omit project_id to use the caller's project automatically.",
     inputSchema: SPAWN_SESSION_SCHEMA,
   },
   {
     name: "send_to_session",
-    description: "Write input text to a running session in the current project.",
+    description: "Write input text to a running session in the current project. submit defaults to true and presses Enter for you.",
     inputSchema: SEND_TO_SESSION_SCHEMA,
   },
   {
@@ -99,6 +124,21 @@ export const MCP_TOOL_DEFINITIONS: readonly McpToolSchema[] = [
     name: "kill_session",
     description: "Kill a session and all descendants within the current project.",
     inputSchema: KILL_SESSION_SCHEMA,
+  },
+  {
+    name: "list_available_roles",
+    description: "List the bundled kleiber-agents roles that can be used for role-based sub-sessions.",
+    inputSchema: LIST_AVAILABLE_ROLES_SCHEMA,
+  },
+  {
+    name: "notify_parent",
+    description: "Send a status update from the current sub-session to its parent session.",
+    inputSchema: NOTIFY_PARENT_SCHEMA,
+  },
+  {
+    name: "wait_for_child_notification",
+    description: "Wait for the next queued child notification or child-exit event for the current session.",
+    inputSchema: WAIT_FOR_CHILD_NOTIFICATION_SCHEMA,
   },
 ] as const;
 

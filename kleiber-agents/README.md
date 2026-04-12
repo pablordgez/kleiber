@@ -149,6 +149,8 @@ The `project-manager` agent is written to be honest about harness limitations:
 - It should fall back to sequential execution when orchestration is unsupported or unavailable.
 - It should surface missing adapters / MCP when a requested model or external harness cannot be launched from the current environment.
 - It should isolate parallel workers with separate git branches and worktrees when possible.
+- When Kleiber MCP is available, it should verify available roles before spawning role-based sub-sessions.
+- It should send child tasks with a fully submitted `send_to_session` prompt and use `notify_parent` plus `wait_for_child_notification` for execution status instead of polling.
 
 ### Field tester
 The `field-tester` agent only runs realistic manual-style testing when the harness actually has browser/device/computer-use/MCP capabilities available. Otherwise it should say exactly what is missing.

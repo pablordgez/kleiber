@@ -89,12 +89,21 @@ export type ListSessionsTool = McpToolBase<"list_sessions">;
 
 export type KillSessionTool = McpToolBase<"kill_session">;
 
+export type ListAvailableRolesTool = McpToolBase<"list_available_roles">;
+
+export type NotifyParentTool = McpToolBase<"notify_parent">;
+
+export type WaitForChildNotificationTool = McpToolBase<"wait_for_child_notification">;
+
 export type McpToolSchema =
   | SpawnSessionTool
   | SendToSessionTool
   | ReadSessionTool
   | ListSessionsTool
-  | KillSessionTool;
+  | KillSessionTool
+  | ListAvailableRolesTool
+  | NotifyParentTool
+  | WaitForChildNotificationTool;
 
 export interface HarnessAdapter {
   enabled: boolean;

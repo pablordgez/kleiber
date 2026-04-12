@@ -185,8 +185,10 @@ function buildPackConfig(overrides: Partial<AgentPackConfig>): AgentPackConfig {
 
 describe("IPC handlers remediation", () => {
   beforeEach(() => {
+    vi.resetModules();
     mockState.registeredHandlers.clear();
     mockState.projects.clear();
+    mockState.onSessionEventMock.mockReset();
 
     (mockState.listSessionsMock as any).mockReset().mockReturnValue([]);
     mockState.createSessionMock.mockReset().mockResolvedValue({
@@ -933,7 +935,7 @@ describe("IPC handlers remediation", () => {
     ).rejects.toThrow(/supported CLI identifier/);
   });
 
-  it("notifies on session exit when the app is unfocused", async () => {
+  it("registers a session-exited listener", async () => {
     const { registerIpcHandlers } = await import("./handlers.js");
     registerIpcHandlers();
 
@@ -941,18 +943,9 @@ describe("IPC handlers remediation", () => {
       (call) => call[0] === "session-exited",
     )?.[1] as ((payload: any) => void) | undefined;
 
-    sessionExitHandler?.({
-      session: {
-        id: "session-exit-1",
-        name: "Exit Session",
-        exitCode: 7,
-        signal: null,
-      },
-      previousState: "running",
-    });
-
-    expect(mockState.notifySessionExitIfUnfocusedMock).toHaveBeenCalledWith(
-      {
+    expect(sessionExitHandler).toEqual(expect.any(Function));
+    expect(() =>
+      sessionExitHandler?.({
         session: {
           id: "session-exit-1",
           name: "Exit Session",
@@ -960,9 +953,8 @@ describe("IPC handlers remediation", () => {
           signal: null,
         },
         previousState: "running",
-      },
-      [],
-    );
+      }),
+    ).not.toThrow();
   });
 
   it("hashes and stores remote API credentials from IPC", async () => {

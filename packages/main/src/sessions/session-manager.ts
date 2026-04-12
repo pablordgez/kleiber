@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -14,6 +14,28 @@ const DEFAULT_COLUMNS = 120;
 const DEFAULT_ROWS = 30;
 const MAX_OUTPUT_LINE_LENGTH = 10_000;
 const TRUNCATED_LINE_SUFFIX = " [truncated]";
+const SESSION_STARTUP_INPUT_QUIET_MS = 4_000;
+const SESSION_STARTUP_INPUT_MIN_ELAPSED_MS = 5_000;
+const SESSION_STARTUP_INPUT_GRACE_MS = 30_000;
+const CODEX_PROGRAMMATIC_ENTER_SEQUENCE = "\u001B[13u";
+const PROGRAMMATIC_SUBMIT_DELAY_SHORT_MS = 100;
+const PROGRAMMATIC_SUBMIT_DELAY_MEDIUM_MS = 250;
+const PROGRAMMATIC_SUBMIT_DELAY_LONG_MS = 750;
+const PROGRAMMATIC_SUBMIT_MEDIUM_TEXT_LENGTH = 500;
+const PROGRAMMATIC_SUBMIT_LONG_TEXT_LENGTH = 1_000;
+const PROGRAMMATIC_PROMPT_CHUNK_THRESHOLD = 512;
+const PROGRAMMATIC_PROMPT_CHUNK_SIZE = 128;
+const PROGRAMMATIC_PROMPT_CHUNK_DELAY_MS = 20;
+const CODEX_PROGRAMMATIC_SUBMIT_FALLBACK_DELAY_MS = 2_000;
+const CODEX_PROGRAMMATIC_SUBMIT_FALLBACK_DELAY_PER_EXTRA_KB_MS = 1_000;
+const CODEX_PROGRAMMATIC_SUBMIT_FALLBACK_DELAY_MAX_MS = 5_000;
+const CODEX_PROGRAMMATIC_SUBMIT_FALLBACK_RETRY_DELAY_MS = 500;
+const CODEX_PROGRAMMATIC_SUBMIT_FALLBACK_MAX_WAIT_MS = 8_000;
+const CODEX_PROGRAMMATIC_SUBMIT_FALLBACK_MAX_WAIT_PER_EXTRA_KB_MS = 2_000;
+const CODEX_PROGRAMMATIC_SUBMIT_FALLBACK_MAX_WAIT_CAP_MS = 20_000;
+const CODEX_PROGRAMMATIC_SUBMIT_FORCED_FALLBACK_QUIET_MS = 1_000;
+const CODEX_PROGRAMMATIC_SUBMIT_OUTPUT_QUIET_MS = 300;
+const CODEX_PROGRAMMATIC_SUBMIT_TAIL_SIGNATURE_LENGTH = 120;
 
 export interface PtyExitEvent {
   exitCode: number | null;
@@ -99,6 +121,12 @@ export interface ResizeSessionOptions {
   rows: number;
 }
 
+export type SessionInputSource = "mcp" | "renderer_ipc" | "remote_ws" | "unknown";
+
+export interface SendSessionInputOptions {
+  source?: SessionInputSource;
+}
+
 export interface SessionManagerOptions {
   outputBufferSize?: number;
   ptyFactory?: PtyFactory;
@@ -128,6 +156,25 @@ interface SessionRuntimeRecord extends Omit<ManagedSessionRecord, "outputBuffer"
   childSessionIds: Set<UUID>;
   outputBuffer: CircularBuffer<string>;
   pendingOutput: string;
+  pendingInputs: Array<{
+    input: string;
+    source: SessionInputSource;
+    delayMs: number;
+    delayFromPreviousWrite: boolean;
+    notBeforeMs: number | null;
+    bypassStartupDeferral: boolean;
+  }>;
+  pendingInputFlushTimer: NodeJS.Timeout | null;
+  pendingCodexProgrammaticSubmit: {
+    textLength: number;
+    promptTailSignature: string;
+    submitWrittenAtMs: number | null;
+    firstOutputAfterSubmitAtMs: number | null;
+    fallbackSent: boolean;
+    fallbackTimer: NodeJS.Timeout | null;
+  } | null;
+  startedAtMs: number;
+  lastOutputAtMs: number | null;
   pty: PtyProcess | null;
   cleanup: Disposable[];
 }
@@ -324,14 +371,52 @@ export class SessionManager extends EventEmitter {
     return options.plainText === false ? lines : lines.map(stripAnsi);
   }
 
-  sendToSession(sessionId: UUID, input: string): void {
+  sendToSession(sessionId: UUID, input: string, options: SendSessionInputOptions = {}): void {
     const session = this.#requireSession(sessionId);
+    const source = options.source ?? "unknown";
 
     if (session.state !== "running" || !session.pty) {
       throw new Error(`Session ${sessionId} is not running.`);
     }
 
-    session.pty.write(input);
+    this.#clearPendingCodexProgrammaticSubmit(session);
+
+    const stagedSubmit = resolveProgrammaticSubmit(session, source, input);
+    if (stagedSubmit) {
+      const submitDelayMs = resolveProgrammaticSubmitDelayMs(stagedSubmit.text.length);
+      if (stagedSubmit.armCodexFallback && stagedSubmit.text.length > 0) {
+        this.#armPendingCodexProgrammaticSubmit(session, stagedSubmit.text);
+      }
+      const promptChunks = splitProgrammaticPrompt(stagedSubmit.text);
+      if (promptChunks.length > 1) {
+        appendRuntimeDebugLog(session, "pty.write.prompt_chunked", {
+          cli: session.cli,
+          text_length: stagedSubmit.text.length,
+          chunk_count: promptChunks.length,
+          chunk_size: PROGRAMMATIC_PROMPT_CHUNK_SIZE,
+          inter_chunk_delay_ms: PROGRAMMATIC_PROMPT_CHUNK_DELAY_MS,
+        });
+      }
+      for (const [index, chunk] of promptChunks.entries()) {
+        this.#enqueueInput(session, chunk, source, {
+          ...(index === 0
+            ? {}
+            : {
+                delayMs: PROGRAMMATIC_PROMPT_CHUNK_DELAY_MS,
+                delayFromPreviousWrite: true,
+                bypassStartupDeferral: true,
+              }),
+        });
+      }
+      this.#enqueueInput(session, stagedSubmit.submit, source, {
+        delayMs: stagedSubmit.text.length > 0 ? submitDelayMs : 0,
+        delayFromPreviousWrite: stagedSubmit.text.length > 0,
+        bypassStartupDeferral: stagedSubmit.text.length > 0,
+      });
+      return;
+    }
+
+    this.#enqueueInput(session, input, source);
   }
 
   resizeSession(sessionId: UUID, options: ResizeSessionOptions): void {
@@ -434,7 +519,12 @@ export class SessionManager extends EventEmitter {
       return;
     }
 
+    session.lastOutputAtMs = Date.now();
     const appendedLines = appendOutput(session, chunk);
+    if (session.pendingInputs.length > 0) {
+      this.#schedulePendingInputFlush(session);
+    }
+    this.#handleCodexProgrammaticSubmitOutput(session, chunk);
     this.emit("session-output", {
       sessionId,
       projectId: session.projectId,
@@ -537,6 +627,258 @@ export class SessionManager extends EventEmitter {
       signal: session.signal,
     };
   }
+
+  #writeToPty(session: SessionRuntimeRecord, input: string, source: SessionInputSource): void {
+    if (session.state !== "running" || !session.pty) {
+      throw new Error(`Session ${session.id} is not running.`);
+    }
+
+    appendRuntimeDebugLog(session, "pty.write", {
+      source,
+      length: input.length,
+      line_ending: detectDebugLineEnding(input),
+      preview: input.slice(0, 200),
+    });
+    session.pty.write(input);
+    this.#handlePostPtyWrite(session, input, source);
+  }
+
+  #handlePostPtyWrite(session: SessionRuntimeRecord, input: string, source: SessionInputSource): void {
+    if (
+      source !== "mcp" ||
+      session.cli !== "codex" ||
+      input !== CODEX_PROGRAMMATIC_ENTER_SEQUENCE ||
+      !session.pendingCodexProgrammaticSubmit ||
+      session.pendingCodexProgrammaticSubmit.submitWrittenAtMs !== null
+    ) {
+      return;
+    }
+
+    session.pendingCodexProgrammaticSubmit.submitWrittenAtMs = Date.now();
+    const fallbackDelayMs = resolveCodexProgrammaticSubmitFallbackDelayMs(
+      session.pendingCodexProgrammaticSubmit.textLength,
+    );
+    appendRuntimeDebugLog(session, "pty.write.codex_submit_armed", {
+      text_length: session.pendingCodexProgrammaticSubmit.textLength,
+      fallback_delay_ms: fallbackDelayMs,
+      fallback_max_wait_ms: resolveCodexProgrammaticSubmitFallbackMaxWaitMs(
+        session.pendingCodexProgrammaticSubmit.textLength,
+      ),
+    });
+    this.#scheduleCodexProgrammaticSubmitFallback(session, fallbackDelayMs);
+  }
+
+  #armPendingCodexProgrammaticSubmit(session: SessionRuntimeRecord, text: string): void {
+    session.pendingCodexProgrammaticSubmit = {
+      textLength: text.length,
+      promptTailSignature: buildCodexPromptTailSignature(text),
+      submitWrittenAtMs: null,
+      firstOutputAfterSubmitAtMs: null,
+      fallbackSent: false,
+      fallbackTimer: null,
+    };
+  }
+
+  #clearPendingCodexProgrammaticSubmit(session: SessionRuntimeRecord): void {
+    if (session.pendingCodexProgrammaticSubmit?.fallbackTimer) {
+      clearTimeout(session.pendingCodexProgrammaticSubmit.fallbackTimer);
+    }
+    session.pendingCodexProgrammaticSubmit = null;
+  }
+
+  #handleCodexProgrammaticSubmitOutput(session: SessionRuntimeRecord, chunk: string): void {
+    const pending = session.pendingCodexProgrammaticSubmit;
+    if (!pending || pending.submitWrittenAtMs === null) {
+      return;
+    }
+
+    pending.firstOutputAfterSubmitAtMs ??= Date.now();
+    if (codexOutputLooksSubmitted(chunk)) {
+      appendRuntimeDebugLog(session, "pty.write.codex_submit_confirmed", {
+        text_length: pending.textLength,
+        fallback_sent: pending.fallbackSent,
+        confirmation: "working_marker",
+      });
+      this.#clearPendingCodexProgrammaticSubmit(session);
+    }
+  }
+
+  #scheduleCodexProgrammaticSubmitFallback(session: SessionRuntimeRecord, delayMs: number): void {
+    const pending = session.pendingCodexProgrammaticSubmit;
+    if (!pending) {
+      return;
+    }
+
+    if (pending.fallbackTimer) {
+      clearTimeout(pending.fallbackTimer);
+    }
+
+    pending.fallbackTimer = setTimeout(() => {
+      const current = this.#sessions.get(session.id);
+      if (!current || current.state !== "running" || !current.pty) {
+        return;
+      }
+
+      const activePending = current.pendingCodexProgrammaticSubmit;
+      if (!activePending || activePending.submitWrittenAtMs === null) {
+        return;
+      }
+
+      const fallbackDecision = resolveCodexProgrammaticSubmitFallback(current, activePending);
+      if (fallbackDecision === "wait") {
+        appendRuntimeDebugLog(current, "pty.write.codex_submit_fallback_wait", {
+          text_length: activePending.textLength,
+          idle_ms_since_submit: Date.now() - activePending.submitWrittenAtMs,
+        });
+        this.#scheduleCodexProgrammaticSubmitFallback(current, CODEX_PROGRAMMATIC_SUBMIT_FALLBACK_RETRY_DELAY_MS);
+        return;
+      }
+
+      activePending.fallbackTimer = null;
+      activePending.fallbackSent = true;
+      appendRuntimeDebugLog(current, "pty.write.codex_submit_fallback", {
+        text_length: activePending.textLength,
+        idle_ms_since_submit: Date.now() - activePending.submitWrittenAtMs,
+        output_seen_since_submit: activePending.firstOutputAfterSubmitAtMs !== null,
+      });
+      current.pty.write(CODEX_PROGRAMMATIC_ENTER_SEQUENCE);
+      appendRuntimeDebugLog(current, "pty.write", {
+        source: "mcp",
+        length: CODEX_PROGRAMMATIC_ENTER_SEQUENCE.length,
+        line_ending: detectDebugLineEnding(CODEX_PROGRAMMATIC_ENTER_SEQUENCE),
+        preview: CODEX_PROGRAMMATIC_ENTER_SEQUENCE,
+      });
+      this.#clearPendingCodexProgrammaticSubmit(current);
+    }, delayMs);
+  }
+
+  #enqueueInput(
+    session: SessionRuntimeRecord,
+    input: string,
+    source: SessionInputSource,
+    options: {
+      delayMs?: number;
+      delayFromPreviousWrite?: boolean;
+      bypassStartupDeferral?: boolean;
+    } = {},
+  ): void {
+    const delayMs = options.delayMs ?? 0;
+    const delayFromPreviousWrite = options.delayFromPreviousWrite ?? false;
+    const bypassStartupDeferral = options.bypassStartupDeferral ?? false;
+    const shouldQueue =
+      delayMs > 0 || delayFromPreviousWrite || (!bypassStartupDeferral && this.#shouldDeferInput(session, source));
+
+    if (!shouldQueue) {
+      this.#writeToPty(session, input, source);
+      return;
+    }
+
+    session.pendingInputs.push({
+      input,
+      source,
+      delayMs,
+      delayFromPreviousWrite,
+      notBeforeMs: delayFromPreviousWrite ? null : Date.now() + delayMs,
+      bypassStartupDeferral,
+    });
+    appendRuntimeDebugLog(session, "pty.write.queued", {
+      source,
+      queue_length: session.pendingInputs.length,
+      length: input.length,
+      line_ending: detectDebugLineEnding(input),
+      preview: input.slice(0, 200),
+      delay_ms: delayMs,
+      delay_from_previous_write: delayFromPreviousWrite,
+      bypass_startup_deferral: bypassStartupDeferral,
+    });
+    this.#schedulePendingInputFlush(session);
+  }
+
+  #shouldDeferInput(session: SessionRuntimeRecord, source: SessionInputSource): boolean {
+    if (source !== "mcp" || !session.cli || session.type === "plain") {
+      return false;
+    }
+
+    const now = Date.now();
+    if (now - session.startedAtMs > SESSION_STARTUP_INPUT_GRACE_MS) {
+      return false;
+    }
+
+    if (now - session.startedAtMs < SESSION_STARTUP_INPUT_MIN_ELAPSED_MS) {
+      return true;
+    }
+
+    if (session.lastOutputAtMs === null) {
+      return false;
+    }
+
+    return now - session.lastOutputAtMs < SESSION_STARTUP_INPUT_QUIET_MS;
+  }
+
+  #schedulePendingInputFlush(session: SessionRuntimeRecord): void {
+    if (session.pendingInputFlushTimer) {
+      clearTimeout(session.pendingInputFlushTimer);
+    }
+
+    const nextInput = session.pendingInputs[0];
+    if (!nextInput) {
+      return;
+    }
+
+    const now = Date.now();
+    const delay = Math.max(0, this.#resolvePendingInputReadyAt(session, nextInput) - now);
+    session.pendingInputFlushTimer = setTimeout(() => {
+      session.pendingInputFlushTimer = null;
+      this.#flushPendingInputs(session.id);
+    }, delay);
+  }
+
+  #flushPendingInputs(sessionId: UUID): void {
+    const session = this.#sessions.get(sessionId);
+    if (!session || session.pendingInputs.length === 0) {
+      return;
+    }
+
+    if (session.state !== "running" || !session.pty) {
+      session.pendingInputs = [];
+      return;
+    }
+
+    while (session.pendingInputs.length > 0) {
+      const nextInput = session.pendingInputs[0];
+      if (!nextInput) {
+        return;
+      }
+
+      if (this.#resolvePendingInputReadyAt(session, nextInput) > Date.now()) {
+        this.#schedulePendingInputFlush(session);
+        return;
+      }
+
+      session.pendingInputs.shift();
+      this.#writeToPty(session, nextInput.input, nextInput.source);
+    }
+  }
+
+  #resolvePendingInputReadyAt(
+    session: SessionRuntimeRecord,
+    input: SessionRuntimeRecord["pendingInputs"][number],
+  ): number {
+    if (input.notBeforeMs === null) {
+      input.notBeforeMs = Date.now() + input.delayMs;
+    }
+
+    let readyAt = input.notBeforeMs;
+    if (!input.bypassStartupDeferral && this.#shouldDeferInput(session, input.source)) {
+      const lastActivityAt = Math.max(session.startedAtMs, session.lastOutputAtMs ?? 0);
+      readyAt = Math.max(
+        readyAt,
+        lastActivityAt + SESSION_STARTUP_INPUT_QUIET_MS,
+        session.startedAtMs + SESSION_STARTUP_INPUT_MIN_ELAPSED_MS,
+      );
+    }
+    return readyAt;
+  }
 }
 
 function createRuntimeRecord(input: {
@@ -568,6 +910,11 @@ function createRuntimeRecord(input: {
     pid: null,
     outputBuffer: new CircularBuffer<string>(input.outputBufferSize),
     pendingOutput: "",
+    pendingInputs: [],
+    pendingInputFlushTimer: null,
+    pendingCodexProgrammaticSubmit: null,
+    startedAtMs: Date.now(),
+    lastOutputAtMs: null,
     pty: null,
     childSessionIds: new Set<UUID>(),
     cleanup: [],
@@ -615,7 +962,7 @@ function resolveSessionName(
   return "shell";
 }
 
-function resolveEffectiveYolo(
+export function resolveEffectiveYolo(
   parentYolo: boolean | null,
   requestedYolo: boolean | undefined,
   defaultYolo: boolean | undefined,
@@ -773,6 +1120,170 @@ function resolveMcpDebugLogPath(sessionId: UUID, workingDirectory: string): stri
   return path.join(workingDirectory, ".kleiber", "logs", "mcp", `${sessionId}.log`);
 }
 
+function appendRuntimeDebugLog(
+  session: Pick<SessionRuntimeRecord, "id" | "workingDirectory">,
+  event: string,
+  details: Record<string, unknown>,
+): void {
+  try {
+    const logPath = resolveMcpDebugLogPath(session.id, session.workingDirectory);
+    mkdirSync(path.dirname(logPath), { recursive: true });
+    appendFileSync(logPath, `${new Date().toISOString()} ${event} ${JSON.stringify(details)}\n`, "utf8");
+  } catch {
+    // Debug logging must never break terminal I/O.
+  }
+}
+
+function detectDebugLineEnding(input: string): "none" | "lf" | "crlf" | "cr" {
+  if (input.endsWith("\r\n")) {
+    return "crlf";
+  }
+  if (input.endsWith("\n")) {
+    return "lf";
+  }
+  if (input.endsWith("\r")) {
+    return "cr";
+  }
+  return "none";
+}
+
+function resolveProgrammaticSubmit(
+  session: Pick<SessionRuntimeRecord, "cli">,
+  source: SessionInputSource,
+  input: string,
+): { text: string; submit: string; armCodexFallback: boolean } | null {
+  if (source !== "mcp" || !session.cli) {
+    return null;
+  }
+
+  let text: string | null = null;
+  if (input.endsWith("\r\n")) {
+    text = input.slice(0, -2);
+  } else if (input.endsWith("\r")) {
+    text = input.slice(0, -1);
+  } else if (input.endsWith("\n")) {
+    text = input.slice(0, -1);
+  }
+
+  if (text === null) {
+    return null;
+  }
+
+  const armCodexFallback = session.cli === "codex";
+  if (!armCodexFallback && text.length < PROGRAMMATIC_PROMPT_CHUNK_THRESHOLD) {
+    return null;
+  }
+
+  return {
+    text,
+    submit: armCodexFallback ? CODEX_PROGRAMMATIC_ENTER_SEQUENCE : "\r",
+    armCodexFallback,
+  };
+}
+
+function splitProgrammaticPrompt(text: string): string[] {
+  if (text.length === 0) {
+    return [];
+  }
+
+  if (text.length < PROGRAMMATIC_PROMPT_CHUNK_THRESHOLD) {
+    return [text];
+  }
+
+  const chunks: string[] = [];
+  for (let index = 0; index < text.length; index += PROGRAMMATIC_PROMPT_CHUNK_SIZE) {
+    chunks.push(text.slice(index, index + PROGRAMMATIC_PROMPT_CHUNK_SIZE));
+  }
+  return chunks;
+}
+
+function resolveProgrammaticSubmitDelayMs(textLength: number): number {
+  if (textLength >= PROGRAMMATIC_SUBMIT_LONG_TEXT_LENGTH) {
+    return PROGRAMMATIC_SUBMIT_DELAY_LONG_MS;
+  }
+
+  if (textLength >= PROGRAMMATIC_SUBMIT_MEDIUM_TEXT_LENGTH) {
+    return PROGRAMMATIC_SUBMIT_DELAY_MEDIUM_MS;
+  }
+
+  return PROGRAMMATIC_SUBMIT_DELAY_SHORT_MS;
+}
+
+function resolveCodexProgrammaticSubmitFallbackDelayMs(textLength: number): number {
+  const extraPromptKb = Math.max(0, Math.ceil(textLength / 1_000) - 1);
+  return Math.min(
+    CODEX_PROGRAMMATIC_SUBMIT_FALLBACK_DELAY_MS +
+      extraPromptKb * CODEX_PROGRAMMATIC_SUBMIT_FALLBACK_DELAY_PER_EXTRA_KB_MS,
+    CODEX_PROGRAMMATIC_SUBMIT_FALLBACK_DELAY_MAX_MS,
+  );
+}
+
+function resolveCodexProgrammaticSubmitFallbackMaxWaitMs(textLength: number): number {
+  const extraPromptKb = Math.max(0, Math.ceil(textLength / 1_000) - 1);
+  return Math.min(
+    CODEX_PROGRAMMATIC_SUBMIT_FALLBACK_MAX_WAIT_MS +
+      extraPromptKb * CODEX_PROGRAMMATIC_SUBMIT_FALLBACK_MAX_WAIT_PER_EXTRA_KB_MS,
+    CODEX_PROGRAMMATIC_SUBMIT_FALLBACK_MAX_WAIT_CAP_MS,
+  );
+}
+
+function resolveCodexProgrammaticSubmitFallback(
+  session: Pick<SessionRuntimeRecord, "outputBuffer" | "pendingOutput" | "lastOutputAtMs">,
+  pending: NonNullable<SessionRuntimeRecord["pendingCodexProgrammaticSubmit"]>,
+): "wait" | "submit" {
+  const elapsedSinceSubmitMs =
+    pending.submitWrittenAtMs === null ? 0 : Date.now() - pending.submitWrittenAtMs;
+  const maxWaitMs = resolveCodexProgrammaticSubmitFallbackMaxWaitMs(pending.textLength);
+
+  if (pending.firstOutputAfterSubmitAtMs === null) {
+    return elapsedSinceSubmitMs >= maxWaitMs ? "submit" : "wait";
+  }
+
+  if (elapsedSinceSubmitMs >= maxWaitMs) {
+    if (
+      session.lastOutputAtMs !== null &&
+      Date.now() - session.lastOutputAtMs < CODEX_PROGRAMMATIC_SUBMIT_FORCED_FALLBACK_QUIET_MS
+    ) {
+      return "wait";
+    }
+    return "submit";
+  }
+
+  if (!isCodexPromptTailVisible(session, pending.promptTailSignature)) {
+    return "wait";
+  }
+
+  if (session.lastOutputAtMs !== null && Date.now() - session.lastOutputAtMs < CODEX_PROGRAMMATIC_SUBMIT_OUTPUT_QUIET_MS) {
+    return "wait";
+  }
+
+  return "submit";
+}
+
+function buildCodexPromptTailSignature(text: string): string {
+  return normalizeCodexPromptForMatch(text).slice(-CODEX_PROGRAMMATIC_SUBMIT_TAIL_SIGNATURE_LENGTH);
+}
+
+function isCodexPromptTailVisible(
+  session: Pick<SessionRuntimeRecord, "outputBuffer" | "pendingOutput">,
+  promptTailSignature: string,
+): boolean {
+  if (!promptTailSignature) {
+    return true;
+  }
+
+  const visibleOutput = `${session.outputBuffer.toArray().join("\n")}\n${session.pendingOutput}`;
+  return normalizeCodexPromptForMatch(visibleOutput).includes(promptTailSignature);
+}
+
+function normalizeCodexPromptForMatch(input: string): string {
+  return stripAnsi(input).replace(/\s+/g, "").toLowerCase();
+}
+
+function codexOutputLooksSubmitted(chunk: string): boolean {
+  return normalizeCodexPromptForMatch(chunk).includes("working(");
+}
+
 function resolveDefaultShell(): string {
   if (process.platform === "win32") {
     return process.env.COMSPEC ?? "cmd.exe";
@@ -825,6 +1336,17 @@ function stripAnsi(line: string): string {
 }
 
 function cleanupRuntime(session: SessionRuntimeRecord): void {
+  if (session.pendingInputFlushTimer) {
+    clearTimeout(session.pendingInputFlushTimer);
+    session.pendingInputFlushTimer = null;
+  }
+
+  if (session.pendingCodexProgrammaticSubmit?.fallbackTimer) {
+    clearTimeout(session.pendingCodexProgrammaticSubmit.fallbackTimer);
+    session.pendingCodexProgrammaticSubmit.fallbackTimer = null;
+  }
+  session.pendingCodexProgrammaticSubmit = null;
+
   for (const disposable of session.cleanup.splice(0)) {
     disposable.dispose();
   }

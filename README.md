@@ -84,6 +84,11 @@ When MCP is enabled for an agent session, Kleiber injects a session-scoped stdio
 - `read_session`
 - `list_sessions`
 - `kill_session`
+- `list_available_roles`
+- `notify_parent`
+- `wait_for_child_notification`
+
+`spawn_session` can infer the caller's project when `project_id` is omitted. `send_to_session` submits input by default so child prompts do not stay half-typed. Parents can now wait on `wait_for_child_notification` and have children report progress or completion with `notify_parent` instead of polling child status with repeated `read_session` or `list_sessions` calls.
 
 ## How It Works
 

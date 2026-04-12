@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from "electron";
+import { clipboard, contextBridge, ipcRenderer } from "electron";
 import type {
   Project,
   Session,
@@ -140,6 +140,12 @@ const api = {
         ipcRenderer.removeListener(channel, listener);
       };
     },
+  },
+  clipboard: {
+    writeText: (text: string): void => {
+      clipboard.writeText(text);
+    },
+    readText: (): string => clipboard.readText(),
   },
 };
 

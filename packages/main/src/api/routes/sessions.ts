@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { SUPPORTED_AGENT_CLIS } from "@kleiber/shared";
 
-import { resolveHarnessAdapter } from "../../pack/harness-adapter";
+import { listConfiguredHarnesses } from "../../pack/harness-adapter";
 import type {
   RemoteApiCreateSessionPayload,
   RemoteApiCreateSessionResolver,
@@ -48,15 +48,7 @@ export async function registerSessionRoutes(
       }
 
       const packConfig = await options.packManager.readProjectConfig(project.directoryPath);
-      const availableHarnesses = packConfig
-        ? SUPPORTED_AGENT_CLIS.filter((cli) => {
-            try {
-              return resolveHarnessAdapter(packConfig, cli).enabled;
-            } catch {
-              return false;
-            }
-          })
-        : [...SUPPORTED_AGENT_CLIS];
+      const availableHarnesses = packConfig ? listConfiguredHarnesses(packConfig) : [...SUPPORTED_AGENT_CLIS];
 
       const availableAgents = await options.packManager.discoverBundledRoles();
       return {

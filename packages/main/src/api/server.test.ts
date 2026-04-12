@@ -299,6 +299,70 @@ describe("remote API server", () => {
     });
   });
 
+  it("infers available remote harnesses from allowed providers when harness adapters are omitted", async () => {
+    const credentials: RemoteApiCredentials = {
+      username: "kleiber",
+      passwordHash: await bcrypt.hash("swordfish", 12),
+    };
+    const dependencies = buildDependencies({ credentials });
+    dependencies.packManager.readProjectConfig.mockResolvedValue({
+      version: 1,
+      providers: {
+        allowed: ["anthropic", "google", "openai"],
+        disallowed: [],
+      },
+      models: {
+        defaults: {
+          low_complexity: { provider: "openai", model: "gpt-5.4-mini" },
+          medium_complexity: { provider: "openai", model: "gpt-5.4" },
+          high_complexity: { provider: "openai", model: "gpt-5.4" },
+        },
+        notes: [],
+      },
+      harness_adapters: {
+      },
+      mcp: {
+        available: [],
+        notes: [],
+      },
+      agent_overrides: {},
+    });
+
+    const app = await buildRemoteApiApp({
+      store: dependencies.store,
+      packManager: dependencies.packManager,
+      sessionManager: dependencies.sessionManager as any,
+      createSessionResolver: dependencies.createSessionResolver,
+      signingKey: Buffer.from("00112233445566778899aabbccddeeff", "utf8"),
+    });
+    openApps.add(app);
+
+    const authResponse = await app.inject({
+      method: "POST",
+      url: "/auth",
+      payload: {
+        username: "kleiber",
+        password: "swordfish",
+      },
+    });
+    expect(authResponse.statusCode).toBe(200);
+
+    const { token } = authResponse.json() as { token: string };
+    const sessionOptionsResponse = await app.inject({
+      method: "GET",
+      url: "/projects/project-1/session-options",
+      headers: {
+        authorization: `Bearer ${token}`,
+      },
+    });
+
+    expect(sessionOptionsResponse.statusCode).toBe(200);
+    expect(sessionOptionsResponse.json()).toEqual({
+      availableHarnesses: ["claude", "codex", "gemini"],
+      availableAgents: ["architect", "requirements-engineer"],
+    });
+  });
+
   it("rate limits repeated auth requests from the same IP", async () => {
     const credentials: RemoteApiCredentials = {
       username: "kleiber",

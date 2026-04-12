@@ -24,7 +24,7 @@ import type { RemoteApiPackManager, RemoteApiStore } from "../api/types";
 import { SessionManager, type McpLaunchConfig } from "../sessions/session-manager";
 import { AgentPackManager } from "../pack/agent-pack-manager";
 import { mergeAgentPackConfig } from "../pack/agent-pack-config";
-import { resolveHarnessAdapter } from "../pack/harness-adapter";
+import { listConfiguredHarnesses, resolveHarnessAdapter } from "../pack/harness-adapter";
 import { notifySessionExitIfUnfocused } from "../notifications";
 
 import { PersistenceStore } from "../store";
@@ -545,10 +545,12 @@ export async function resolveSessionCreateOptions(
     throw new Error("Agent sessions require a supported CLI identifier.");
   }
 
-  const packConfig = mergeAgentPackConfig(
-    DEFAULT_PACK_CONFIG,
-    await options.packManager.readProjectConfig(project.directoryPath),
-  );
+  const projectPackConfig = await options.packManager.readProjectConfig(project.directoryPath);
+  if (projectPackConfig && !listConfiguredHarnesses(projectPackConfig).includes(normalizedCli)) {
+    throw new Error(`CLI "${normalizedCli}" is disabled in agent_pack_config.yaml.`);
+  }
+
+  const packConfig = mergeAgentPackConfig(DEFAULT_PACK_CONFIG, projectPackConfig);
   const adapter = resolveHarnessAdapter(packConfig, normalizedCli);
   if (!adapter.enabled) {
     throw new Error(`CLI "${normalizedCli}" is disabled in agent_pack_config.yaml.`);

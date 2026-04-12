@@ -723,6 +723,42 @@ describe("IPC handlers remediation", () => {
     expect(mockState.createSessionMock).not.toHaveBeenCalled();
   });
 
+  it("rejects agent session creation when the CLI provider is not allowed by project config", async () => {
+    const { registerIpcHandlers } = await import("./handlers.js");
+    registerIpcHandlers();
+
+    const projectDir = await mkdtemp(path.join(os.tmpdir(), "kleiber-provider-filter-"));
+    mockState.projects.set("project-provider-filter", {
+      id: "project-provider-filter",
+      name: "Project Provider Filter",
+      directoryPath: projectDir,
+      yoloDefault: false,
+      createdAt: new Date().toISOString(),
+    });
+
+    mockState.readProjectConfigMock.mockResolvedValue(
+      buildPackConfig({
+        providers: {
+          allowed: ["anthropic", "google", "openai"],
+          disallowed: [],
+        },
+        harness_adapters: {},
+      }),
+    );
+
+    const handler = mockState.registeredHandlers.get(IPC_CHANNELS.sessions.create);
+    await expect(
+      handler?.({}, {
+        projectId: "project-provider-filter",
+        name: "OpenCode",
+        type: "agent",
+        cli: "opencode",
+      }),
+    ).rejects.toThrow(/disabled/);
+
+    expect(mockState.createSessionMock).not.toHaveBeenCalled();
+  });
+
   it("returns real pack status and bundled roles through IPC", async () => {
     const { registerIpcHandlers } = await import("./handlers.js");
     registerIpcHandlers();

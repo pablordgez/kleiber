@@ -1,4 +1,4 @@
-import type { AgentPackConfig, HarnessAdapter } from "@kleiber/shared";
+import { SUPPORTED_AGENT_CLIS, type AgentCli, type AgentPackConfig, type HarnessAdapter } from "@kleiber/shared";
 
 export type HarnessInjectionMethod = NonNullable<HarnessAdapter["mcp_injection"]>;
 
@@ -10,6 +10,13 @@ export interface ResolvedHarnessAdapter {
   yoloFlag: string | null;
   mcpInjection: HarnessInjectionMethod | null;
 }
+
+const PROVIDER_TO_CLI: Record<string, AgentCli> = {
+  anthropic: "claude",
+  openai: "codex",
+  opencode: "opencode",
+  google: "gemini",
+};
 
 function readOverrideString(
   config: AgentPackConfig,
@@ -78,4 +85,19 @@ export function resolveHarnessAdapter(
   }
 
   return resolved;
+}
+
+export function listConfiguredHarnesses(config: AgentPackConfig): AgentCli[] {
+  if (Object.keys(config.harness_adapters).length > 0) {
+    return SUPPORTED_AGENT_CLIS.filter((cli) => {
+      const resolved = tryResolveHarnessAdapter(config, cli);
+      return resolved?.enabled ?? false;
+    });
+  }
+
+  const allowedProviders = new Set(config.providers.allowed);
+  return SUPPORTED_AGENT_CLIS.filter((cli) => {
+    const provider = Object.entries(PROVIDER_TO_CLI).find(([, mappedCli]) => mappedCli === cli)?.[0];
+    return provider ? allowedProviders.has(provider) : false;
+  });
 }

@@ -25,30 +25,63 @@ function buildPackConfig(overrides: Partial<AgentPackConfig> = {}): AgentPackCon
         launch_command: "codex",
         orchestration: "native_subagents",
         yolo_flag: "--dangerously-bypass-approvals-and-sandbox",
+        mcp_injection: "argv",
       },
       claude_code: {
         enabled: true,
         launch_command: "claude",
         orchestration: "native_subagents_or_agent_teams",
         yolo_flag: "--dangerously-skip-permissions",
+        mcp_injection: "argv",
       },
       opencode: {
         enabled: true,
         launch_command: "opencode",
         orchestration: "plugin_or_manual",
+        mcp_injection: "env",
       },
       gemini_cli: {
         enabled: true,
         launch_command: "gemini",
         orchestration: "experimental_subagents",
         yolo_flag: "--yolo",
+        mcp_injection: "env",
       },
     },
     mcp: {
       available: ["kleiber-local"],
       notes: [],
     },
-    agent_overrides: {},
+    agent_overrides: {
+      claude_code: {
+        mcp_args_template: ["--mcp-config", "{mcpConfigPath}"],
+        mcp_config_file_name: "claude-mcp-config.json",
+        mcp_config_content:
+          '{"mcpServers":{"kleiber":{"command":{wrapperCommandJson},"args":{wrapperArgsJson},"env":{"KLEIBER_SESSION_ID":"{sessionId}","KLEIBER_PROJECT_ID":"{projectId}","KLEIBER_MCP_SOCKET_PATH":"{mcpSocketPath}","KLEIBER_MCP_DEBUG_LOG_PATH":"{mcpDebugLogPath}","ELECTRON_RUN_AS_NODE":"1"}}}}',
+      },
+      codex: {
+        mcp_args_template: [
+          "-c",
+          "mcp_servers.kleiber.command={wrapperCommandJson}",
+          "-c",
+          "mcp_servers.kleiber.args={wrapperArgsJson}",
+        ],
+      },
+      opencode: {
+        mcp_env_template: {
+          OPENCODE_CONFIG_CONTENT:
+            '{"$schema":"https://opencode.ai/config.json","mcp":{"kleiber":{"type":"local","enabled":true,"command":{wrapperCommandAndArgsJson},"environment":{"KLEIBER_SESSION_ID":"{sessionId}","KLEIBER_PROJECT_ID":"{projectId}","KLEIBER_MCP_SOCKET_PATH":"{mcpSocketPath}","KLEIBER_MCP_DEBUG_LOG_PATH":"{mcpDebugLogPath}","ELECTRON_RUN_AS_NODE":"1"}}}}',
+        },
+      },
+      gemini_cli: {
+        mcp_env_template: {
+          GEMINI_CLI_SYSTEM_SETTINGS_PATH: "{mcpConfigPath}",
+        },
+        mcp_config_file_name: "gemini-settings.json",
+        mcp_config_content:
+          '{"mcpServers":{"kleiber":{"command":{wrapperCommandJson},"args":{wrapperArgsJson},"env":{"KLEIBER_SESSION_ID":"{sessionId}","KLEIBER_PROJECT_ID":"{projectId}","KLEIBER_MCP_SOCKET_PATH":"{mcpSocketPath}","KLEIBER_MCP_DEBUG_LOG_PATH":"{mcpDebugLogPath}","ELECTRON_RUN_AS_NODE":"1"}}}}',
+      },
+    },
     ...overrides,
   };
 }
@@ -102,6 +135,10 @@ function createHarness(options: {
   maxSessionsPerProject?: number;
   maxSessionDepth?: number;
   maxSpawnRequestsPerMinute?: number;
+  mcpRuntime?: {
+    wrapperCommand: string;
+    wrapperArgs: string[];
+  };
 } = {}) {
   const project = options.project ?? buildProject();
   const sessions = options.sessions ?? [buildSession()];
@@ -147,6 +184,10 @@ function createHarness(options: {
     store,
     packManager,
     defaultPackConfig: buildPackConfig(),
+    mcpRuntime: options.mcpRuntime ?? {
+      wrapperCommand: process.execPath,
+      wrapperArgs: ["/tmp/stdio-wrapper.js"],
+    },
     ...(options.now ? { now: options.now } : {}),
     ...(options.maxSessionsPerProject !== undefined
       ? { maxSessionsPerProject: options.maxSessionsPerProject }
@@ -243,8 +284,59 @@ describe("McpOrchestrator", () => {
         defaultYolo: false,
         workingDirectory: "/tmp/project-1/subdir",
         role: "architect",
+        mcpEnabled: true,
+        mcpLaunchConfig: expect.objectContaining({
+          injectionMethod: "argv",
+        }),
         launch: expect.objectContaining({
           args: [],
+        }),
+      }),
+    );
+  });
+
+  it("enables MCP for spawned child sessions so they can create deeper hierarchies", async () => {
+    const createSession = vi.fn(async (input) =>
+      buildSession({
+        id: "child-1",
+        name: input.name ?? "child-1",
+        parentSessionId: input.parentSessionId,
+        projectId: input.projectId,
+        yolo: false,
+        mcpEnabled: input.mcpEnabled ?? false,
+      }),
+    );
+    const { orchestrator, sessionManager } = createHarness({
+      createSession,
+      mcpRuntime: {
+        wrapperCommand: process.execPath,
+        wrapperArgs: ["/tmp/stdio-wrapper.js"],
+      },
+    });
+
+    await expect(
+      orchestrator.callTool(
+        {
+          name: "spawn_session",
+          arguments: {
+            cli: "claude",
+          },
+        },
+        { sessionId: "session-root", projectId: "project-1" },
+      ),
+    ).resolves.toEqual({
+      session_id: "child-1",
+      name: "child-1",
+      yolo: false,
+    });
+
+    expect(sessionManager.createSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mcpEnabled: true,
+        mcpLaunchConfig: expect.objectContaining({
+          injectionMethod: "argv",
+          wrapperCommand: process.execPath,
+          wrapperArgs: ["/tmp/stdio-wrapper.js"],
         }),
       }),
     );

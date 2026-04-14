@@ -24,6 +24,7 @@ import type { RemoteApiPackManager, RemoteApiStore } from "../api/types";
 import { SessionManager, type McpLaunchConfig } from "../sessions/session-manager";
 import { AgentPackManager } from "../pack/agent-pack-manager";
 import { mergeAgentPackConfig } from "../pack/agent-pack-config";
+import { resolveAgentOverride, resolveMcpLaunchConfig, type McpRuntimeOptions } from "../pack/mcp-launch-config";
 import { listConfiguredHarnesses, resolveHarnessAdapter } from "../pack/harness-adapter";
 import { notifySessionExitIfUnfocused } from "../notifications";
 
@@ -160,6 +161,10 @@ const mcpOrchestrator = new McpOrchestrator({
   store,
   packManager: agentPackManager,
   defaultPackConfig: DEFAULT_PACK_CONFIG,
+  mcpRuntime: {
+    wrapperCommand: process.execPath,
+    wrapperArgs: [mcpWrapperScriptPath],
+  },
 });
 
 const remoteApiServer = new RemoteApiServerController({
@@ -171,7 +176,7 @@ const remoteApiServer = new RemoteApiServerController({
     wrapperCommand: process.execPath,
     wrapperArgs: [mcpWrapperScriptPath],
   },
-  webRoot: app.isPackaged ? path.join(process.resourcesPath, "web") : undefined,
+  ...(app.isPackaged ? { webRoot: path.join(process.resourcesPath, "web") } : {}),
 });
 
 // IPC output batching: accumulate PTY chunks for up to 16 ms before sending to
@@ -316,43 +321,6 @@ function normalizeSessionType(
   return role ? "agent_role" : "agent";
 }
 
-function resolveAgentOverride(
-  config: AgentPackConfig,
-  harnessName: string,
-): Record<string, unknown> {
-  const entry = config.agent_overrides[harnessName];
-  if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
-    return {};
-  }
-
-  return entry as Record<string, unknown>;
-}
-
-function readStringArrayOverride(source: Record<string, unknown>, keys: string[]): string[] | null {
-  for (const key of keys) {
-    const value = source[key];
-    if (Array.isArray(value) && value.every((entry) => typeof entry === "string")) {
-      return value as string[];
-    }
-  }
-
-  return null;
-}
-
-function readStringRecordOverride(source: Record<string, unknown>, keys: string[]): Record<string, string> | null {
-  for (const key of keys) {
-    const value = source[key];
-    if (value && typeof value === "object" && !Array.isArray(value)) {
-      const entries = Object.entries(value as Record<string, unknown>);
-      if (entries.every(([, entry]) => typeof entry === "string")) {
-        return Object.fromEntries(entries) as Record<string, string>;
-      }
-    }
-  }
-
-  return null;
-}
-
 function addRoleLaunchArgs(
   args: string[],
   override: Record<string, unknown>,
@@ -470,10 +438,7 @@ export async function resolveSessionCreateOptions(
   options: {
     storeInstance: Pick<RemoteApiStore, "getProject">;
     packManager: Pick<RemoteApiPackManager, "readProjectConfig">;
-    mcpRuntime?: {
-      wrapperCommand: string;
-      wrapperArgs: string[];
-    };
+    mcpRuntime?: McpRuntimeOptions;
   },
 ): Promise<{
   project: Project;
@@ -600,45 +565,6 @@ export async function resolveSessionCreateOptions(
   createSessionInput.mcpLaunchConfig = mcpLaunchConfig;
 
   return { project, createSessionInput };
-}
-
-function resolveMcpLaunchConfig(
-  injectionMethod: "env" | "argv" | "stdio" | "none" | "unknown" | null,
-  override: Record<string, unknown>,
-  runtime: { wrapperCommand: string; wrapperArgs: string[] } | undefined,
-): McpLaunchConfig | null {
-  if (!runtime || !injectionMethod || injectionMethod === "none" || injectionMethod === "unknown") {
-    return null;
-  }
-
-  const argsTemplate = readStringArrayOverride(override, ["mcp_args_template", "mcpArgsTemplate"]);
-  const envTemplate = readStringRecordOverride(override, ["mcp_env_template", "mcpEnvTemplate"]) ?? {};
-  const configContentTemplate =
-    typeof override.mcp_config_content === "string"
-      ? override.mcp_config_content
-      : typeof override.mcpConfigContent === "string"
-        ? override.mcpConfigContent
-        : null;
-  const configFileName =
-    typeof override.mcp_config_file_name === "string"
-      ? override.mcp_config_file_name
-      : typeof override.mcpConfigFileName === "string"
-        ? override.mcpConfigFileName
-        : null;
-
-  if (injectionMethod === "argv" && !argsTemplate) {
-    return null;
-  }
-
-  return {
-    injectionMethod,
-    wrapperCommand: runtime.wrapperCommand,
-    wrapperArgs: runtime.wrapperArgs,
-    ...(argsTemplate ? { argsTemplate } : {}),
-    envTemplate,
-    ...(configContentTemplate ? { configContentTemplate } : {}),
-    ...(configFileName ? { configFileName } : {}),
-  };
 }
 
 function generateProjectConfigYaml(config: ProjectPackConfigData): string {

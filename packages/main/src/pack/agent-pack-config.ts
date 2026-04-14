@@ -175,7 +175,7 @@ export function mergeAgentPackConfig(
       ...defaultConfig.mcp,
       ...projectConfig.mcp,
     },
-    harness_adapters: mergedHarnessAdapters as AgentPackConfig["harness_adapters"],
+    harness_adapters: mergedHarnessAdapters as unknown as AgentPackConfig["harness_adapters"],
     agent_overrides: {
       ...mergedAgentOverrides,
     },

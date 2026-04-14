@@ -13,6 +13,7 @@ import {
 
 import type { AgentPackManager } from "../pack/agent-pack-manager";
 import { mergeAgentPackConfig } from "../pack/agent-pack-config";
+import { resolveAgentOverride, resolveMcpLaunchConfig, type McpRuntimeOptions } from "../pack/mcp-launch-config";
 import { resolveHarnessAdapter } from "../pack/harness-adapter";
 import type {
   CreateSessionOptions,
@@ -42,6 +43,7 @@ export interface McpOrchestratorOptions {
   store: Pick<StoreLike, "getProject">;
   packManager: Pick<AgentPackManager, "discoverBundledRoles" | "readProjectConfig">;
   defaultPackConfig: AgentPackConfig;
+  mcpRuntime?: McpRuntimeOptions;
   now?: () => number;
   maxSessionsPerProject?: number;
   maxSessionDepth?: number;
@@ -116,6 +118,7 @@ export class McpOrchestrator {
   readonly #store: McpOrchestratorOptions["store"];
   readonly #packManager: McpOrchestratorOptions["packManager"];
   readonly #defaultPackConfig: AgentPackConfig;
+  readonly #mcpRuntime: McpRuntimeOptions | undefined;
   readonly #now: () => number;
   readonly #maxSessionsPerProject: number;
   readonly #maxSessionDepth: number;
@@ -129,6 +132,7 @@ export class McpOrchestrator {
     this.#store = options.store;
     this.#packManager = options.packManager;
     this.#defaultPackConfig = options.defaultPackConfig;
+    this.#mcpRuntime = options.mcpRuntime;
     this.#now = options.now ?? (() => Date.now());
     this.#maxSessionsPerProject = options.maxSessionsPerProject ?? 50;
     this.#maxSessionDepth = options.maxSessionDepth ?? 10;
@@ -270,6 +274,7 @@ export class McpOrchestrator {
     if (!adapter.enabled) {
       throw new Error(`CLI "${cli}" is disabled in agent_pack_config.yaml.`);
     }
+    const override = resolveAgentOverride(packConfig, adapter.harnessName);
 
     const role = args.role?.trim() ? args.role.trim() : null;
     if (role) {
@@ -282,6 +287,7 @@ export class McpOrchestrator {
     const workingDirectory = resolveWorkingDirectory(project.directoryPath, args.working_dir);
     const launchArgs: string[] = [];
     const effectiveYolo = resolveEffectiveYolo(callerSession.yolo, args.yolo, false);
+    const mcpLaunchConfig = resolveMcpLaunchConfig(adapter.mcpInjection, override, this.#mcpRuntime);
     const sessionInput: CreateSessionOptions = {
       projectId: project.id,
       parentSessionId: callerSession.id,
@@ -291,7 +297,8 @@ export class McpOrchestrator {
       workingDirectory,
       ...(args.yolo !== undefined ? { requestedYolo: args.yolo } : {}),
       defaultYolo: false,
-      mcpEnabled: false,
+      mcpEnabled: Boolean(mcpLaunchConfig),
+      mcpLaunchConfig,
       launch: {
         command: adapter.launchCommand,
         args: launchArgs,

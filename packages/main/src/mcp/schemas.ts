@@ -28,6 +28,7 @@ export const SPAWN_SESSION_SCHEMA: JsonSchema = {
     project_id: { type: "string", minLength: 1 },
     cli: { type: "string", enum: ["claude", "codex", "opencode", "gemini"] },
     role: { type: "string", minLength: 1 },
+    model: { type: "string", minLength: 1 },
     name: { type: "string", minLength: 1 },
     yolo: { type: "boolean" },
     working_dir: { type: "string", minLength: 1 },

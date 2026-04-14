@@ -1050,10 +1050,7 @@ function applyMcpLaunchConfig(
       : {}),
   };
 
-  spawnOptions.env = {
-    ...spawnOptions.env,
-    ...baseEnv,
-  };
+  spawnOptions.env = mergeLaunchEnvironments(spawnOptions.env, baseEnv);
 
   if (config?.injectionMethod === "argv" && config.argsTemplate) {
     spawnOptions.args = [
@@ -1073,6 +1070,80 @@ function applyMcpLaunchConfig(
       rmSync(path.dirname(mcpConfigPath), { recursive: true, force: true });
     },
   };
+}
+
+function mergeLaunchEnvironments(
+  existing: NodeJS.ProcessEnv,
+  incoming: NodeJS.ProcessEnv,
+): NodeJS.ProcessEnv {
+  const merged: NodeJS.ProcessEnv = { ...existing };
+
+  for (const [key, value] of Object.entries(incoming)) {
+    const currentValue = merged[key];
+    if (typeof currentValue === "string" && typeof value === "string") {
+      const mergedJson = mergeJsonObjectStrings(currentValue, value);
+      if (mergedJson) {
+        merged[key] = mergedJson;
+        continue;
+      }
+    }
+
+    merged[key] = value;
+  }
+
+  return merged;
+}
+
+function mergeJsonObjectStrings(existing: string, incoming: string): string | null {
+  const existingJson = parseJsonObject(existing);
+  const incomingJson = parseJsonObject(incoming);
+  if (!existingJson || !incomingJson) {
+    return null;
+  }
+
+  return JSON.stringify(deepMergeJsonObjects(existingJson, incomingJson));
+}
+
+function parseJsonObject(value: string): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+}
+
+function deepMergeJsonObjects(
+  left: Record<string, unknown>,
+  right: Record<string, unknown>,
+): Record<string, unknown> {
+  const merged: Record<string, unknown> = { ...left };
+
+  for (const [key, value] of Object.entries(right)) {
+    const existingValue = merged[key];
+    if (
+      existingValue &&
+      typeof existingValue === "object" &&
+      !Array.isArray(existingValue) &&
+      value &&
+      typeof value === "object" &&
+      !Array.isArray(value)
+    ) {
+      merged[key] = deepMergeJsonObjects(
+        existingValue as Record<string, unknown>,
+        value as Record<string, unknown>,
+      );
+      continue;
+    }
+
+    merged[key] = value;
+  }
+
+  return merged;
 }
 
 function replaceTemplateValues(

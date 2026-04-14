@@ -178,7 +178,23 @@ function buildPackConfig(overrides: Partial<AgentPackConfig>): AgentPackConfig {
       available: [],
       notes: [],
     },
-    agent_overrides: {},
+    agent_overrides: {
+      claude_code: {
+        model_flag: "--model",
+      },
+      codex: {
+        model_flag: "--model",
+      },
+      opencode: {
+        model_env_template: {
+          OPENCODE_CONFIG_CONTENT:
+            '{"agents":{"coder":{"model":{modelJson}},"summarizer":{"model":{modelJson}},"task":{"model":{modelJson}},"title":{"model":{modelJson}}}}',
+        },
+      },
+      gemini_cli: {
+        model_flag: "--model",
+      },
+    },
     ...overrides,
   };
 }
@@ -523,6 +539,69 @@ describe("IPC handlers remediation", () => {
     expect(createInput.launch.prompt).toContain("Kleiber session orchestration may be available");
     expect(createInput.launch.prompt).toContain(path.join(os.homedir(), ".agents", "skills", "project-spec-utils", "references", "kleiber-ecosystem.md"));
     expect(createInput.launch.prompt).toContain(".gemini/agents/architect.md");
+  });
+
+  it.each([
+    { cli: "codex", expectedArgs: ["--model", "gpt-5.4-mini"] },
+    { cli: "claude", expectedArgs: ["--model", "gpt-5.4-mini"] },
+    { cli: "gemini", expectedArgs: ["--model", "gpt-5.4-mini"] },
+  ])("adds explicit model launch args for %s sessions", async ({ cli, expectedArgs }) => {
+    const { registerIpcHandlers } = await import("./handlers.js");
+    registerIpcHandlers();
+
+    const projectDir = await mkdtemp(path.join(os.tmpdir(), `kleiber-${cli}-model-`));
+    mockState.projects.set(`project-${cli}-model`, {
+      id: `project-${cli}-model`,
+      name: `Project ${cli} Model`,
+      directoryPath: projectDir,
+      yoloDefault: false,
+      createdAt: new Date().toISOString(),
+    });
+
+    const handler = mockState.registeredHandlers.get(IPC_CHANNELS.sessions.create);
+    await handler?.({}, {
+      projectId: `project-${cli}-model`,
+      name: "Model Override",
+      type: "agent",
+      cli,
+      model: "gpt-5.4-mini",
+    });
+
+    const createInput = mockState.createSessionMock.mock.calls.at(-1)?.[0] as Record<string, any>;
+    expect(createInput.launch.args).toEqual(expectedArgs);
+  });
+
+  it("adds explicit model env config for OpenCode sessions", async () => {
+    const { registerIpcHandlers } = await import("./handlers.js");
+    registerIpcHandlers();
+
+    const projectDir = await mkdtemp(path.join(os.tmpdir(), "kleiber-opencode-model-"));
+    mockState.projects.set("project-opencode-model", {
+      id: "project-opencode-model",
+      name: "Project OpenCode Model",
+      directoryPath: projectDir,
+      yoloDefault: false,
+      createdAt: new Date().toISOString(),
+    });
+
+    const handler = mockState.registeredHandlers.get(IPC_CHANNELS.sessions.create);
+    await handler?.({}, {
+      projectId: "project-opencode-model",
+      name: "OpenCode Model",
+      type: "agent",
+      cli: "opencode",
+      model: "gpt-5.4-mini",
+    });
+
+    const createInput = mockState.createSessionMock.mock.calls.at(-1)?.[0] as Record<string, any>;
+    expect(JSON.parse(createInput.launch.env.OPENCODE_CONFIG_CONTENT)).toEqual({
+      agents: {
+        coder: { model: "gpt-5.4-mini" },
+        summarizer: { model: "gpt-5.4-mini" },
+        task: { model: "gpt-5.4-mini" },
+        title: { model: "gpt-5.4-mini" },
+      },
+    });
   });
 
   it("builds inline Codex MCP config for agent sessions", async () => {

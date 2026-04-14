@@ -54,12 +54,14 @@ function buildPackConfig(overrides: Partial<AgentPackConfig> = {}): AgentPackCon
     },
     agent_overrides: {
       claude_code: {
+        model_flag: "--model",
         mcp_args_template: ["--mcp-config", "{mcpConfigPath}"],
         mcp_config_file_name: "claude-mcp-config.json",
         mcp_config_content:
           '{"mcpServers":{"kleiber":{"command":{wrapperCommandJson},"args":{wrapperArgsJson},"env":{"KLEIBER_SESSION_ID":"{sessionId}","KLEIBER_PROJECT_ID":"{projectId}","KLEIBER_MCP_SOCKET_PATH":"{mcpSocketPath}","KLEIBER_MCP_DEBUG_LOG_PATH":"{mcpDebugLogPath}","ELECTRON_RUN_AS_NODE":"1"}}}}',
       },
       codex: {
+        model_flag: "--model",
         mcp_args_template: [
           "-c",
           "mcp_servers.kleiber.command={wrapperCommandJson}",
@@ -68,12 +70,17 @@ function buildPackConfig(overrides: Partial<AgentPackConfig> = {}): AgentPackCon
         ],
       },
       opencode: {
+        model_env_template: {
+          OPENCODE_CONFIG_CONTENT:
+            '{"agents":{"coder":{"model":{modelJson}},"summarizer":{"model":{modelJson}},"task":{"model":{modelJson}},"title":{"model":{modelJson}}}}',
+        },
         mcp_env_template: {
           OPENCODE_CONFIG_CONTENT:
             '{"$schema":"https://opencode.ai/config.json","mcp":{"kleiber":{"type":"local","enabled":true,"command":{wrapperCommandAndArgsJson},"environment":{"KLEIBER_SESSION_ID":"{sessionId}","KLEIBER_PROJECT_ID":"{projectId}","KLEIBER_MCP_SOCKET_PATH":"{mcpSocketPath}","KLEIBER_MCP_DEBUG_LOG_PATH":"{mcpDebugLogPath}","ELECTRON_RUN_AS_NODE":"1"}}}}',
         },
       },
       gemini_cli: {
+        model_flag: "--model",
         mcp_env_template: {
           GEMINI_CLI_SYSTEM_SETTINGS_PATH: "{mcpConfigPath}",
         },
@@ -289,10 +296,105 @@ describe("McpOrchestrator", () => {
           injectionMethod: "argv",
         }),
         launch: expect.objectContaining({
-          args: [],
+          args: [expect.stringMatching(/kleiber-bootstrap.*\.md$/)],
         }),
       }),
     );
+  });
+
+  it("bootstraps Codex role sessions and applies explicit model overrides when spawning", async () => {
+    const createSession = vi.fn(async (input) =>
+      buildSession({
+        id: "child-codex",
+        name: input.name ?? "child-codex",
+        parentSessionId: input.parentSessionId,
+        projectId: input.projectId,
+        yolo: false,
+      }),
+    );
+    const { orchestrator, sessionManager } = createHarness({
+      createSession,
+    });
+
+    await expect(
+      orchestrator.callTool(
+        {
+          name: "spawn_session",
+          arguments: {
+            cli: "codex",
+            role: "architect",
+            model: "gpt-5.4-mini",
+            name: "Codex Architect",
+          },
+        },
+        { sessionId: "session-root", projectId: "project-1" },
+      ),
+    ).resolves.toEqual({
+      session_id: "child-codex",
+      name: "Codex Architect",
+      yolo: false,
+    });
+
+    expect(sessionManager.createSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        launch: expect.objectContaining({
+          args: ["--model", "gpt-5.4-mini"],
+          env: { KLEIBER_AGENT_ROLE: "architect" },
+          prompt: expect.stringContaining(".codex/agents/architect.toml"),
+        }),
+      }),
+    );
+  });
+
+  it.each([
+    { cli: "claude", expectedArgs: ["--model", "gpt-5.4-mini"] },
+    { cli: "gemini", expectedArgs: ["--model", "gpt-5.4-mini"] },
+    { cli: "opencode", expectedEnvKey: "OPENCODE_CONFIG_CONTENT" },
+  ])("applies explicit model overrides when spawning %s sessions", async (testCase) => {
+    const createSession = vi.fn(async (input) =>
+      buildSession({
+        id: `child-${testCase.cli}`,
+        name: input.name ?? `child-${testCase.cli}`,
+        parentSessionId: input.parentSessionId,
+        projectId: input.projectId,
+        yolo: false,
+      }),
+    );
+    const { orchestrator, sessionManager } = createHarness({
+      createSession,
+    });
+
+    await expect(
+      orchestrator.callTool(
+        {
+          name: "spawn_session",
+          arguments: {
+            cli: testCase.cli,
+            model: "gpt-5.4-mini",
+          },
+        },
+        { sessionId: "session-root", projectId: "project-1" },
+      ),
+    ).resolves.toEqual({
+      session_id: `child-${testCase.cli}`,
+      name: `child-${testCase.cli}`,
+      yolo: false,
+    });
+
+    const createInput = sessionManager.createSession.mock.calls.at(-1)?.[0] as Record<string, any>;
+    if ("expectedArgs" in testCase) {
+      expect(createInput.launch.args).toEqual(testCase.expectedArgs);
+      return;
+    }
+
+    expect(JSON.parse(createInput.launch.env[testCase.expectedEnvKey])).toEqual({
+      agents: {
+        coder: { model: "gpt-5.4-mini" },
+        summarizer: { model: "gpt-5.4-mini" },
+        task: { model: "gpt-5.4-mini" },
+        title: { model: "gpt-5.4-mini" },
+      },
+    });
   });
 
   it("enables MCP for spawned child sessions so they can create deeper hierarchies", async () => {

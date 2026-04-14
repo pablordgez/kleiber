@@ -1,10 +1,10 @@
 import { accessSync, constants as fsConstants, existsSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
+import crypto from "node:crypto";
 import YAML from "yaml";
 import { app, ipcMain, BrowserWindow, dialog } from "electron";
-import { BUNDLED_PACK_DISPLAY_NAME, IPC_CHANNELS, PRIMARY_BUNDLED_PACK_DIR, SUPPORTED_AGENT_CLIS } from "@kleiber/shared";
+import { IPC_CHANNELS, PRIMARY_BUNDLED_PACK_DIR, SUPPORTED_AGENT_CLIS } from "@kleiber/shared";
 import log from "electron-log";
 import type {
   AgentCli,
@@ -26,6 +26,12 @@ import { AgentPackManager } from "../pack/agent-pack-manager";
 import { mergeAgentPackConfig } from "../pack/agent-pack-config";
 import { resolveAgentOverride, resolveMcpLaunchConfig, type McpRuntimeOptions } from "../pack/mcp-launch-config";
 import { listConfiguredHarnesses, resolveHarnessAdapter } from "../pack/harness-adapter";
+import {
+  appendModelLaunchArgs,
+  appendRoleLaunchArgs,
+  resolveModelLaunchEnv,
+  resolveRoleBootstrap,
+} from "../pack/session-launch-config";
 import { notifySessionExitIfUnfocused } from "../notifications";
 
 import { PersistenceStore } from "../store";
@@ -84,12 +90,14 @@ const DEFAULT_PACK_CONFIG: AgentPackConfig = {
   },
   agent_overrides: {
     claude_code: {
+      model_flag: "--model",
       mcp_args_template: ["--mcp-config", "{mcpConfigPath}"],
       mcp_config_file_name: "claude-mcp-config.json",
       mcp_config_content:
         '{"mcpServers":{"kleiber":{"command":{wrapperCommandJson},"args":{wrapperArgsJson},"env":{"KLEIBER_SESSION_ID":"{sessionId}","KLEIBER_PROJECT_ID":"{projectId}","KLEIBER_MCP_SOCKET_PATH":"{mcpSocketPath}","KLEIBER_MCP_DEBUG_LOG_PATH":"{mcpDebugLogPath}","ELECTRON_RUN_AS_NODE":"1"}}}}',
     },
     codex: {
+      model_flag: "--model",
       mcp_args_template: [
         "-c",
         "mcp_servers.kleiber.command={wrapperCommandJson}",
@@ -108,12 +116,17 @@ const DEFAULT_PACK_CONFIG: AgentPackConfig = {
       ],
     },
     opencode: {
+      model_env_template: {
+        OPENCODE_CONFIG_CONTENT:
+          '{"agents":{"coder":{"model":{modelJson}},"summarizer":{"model":{modelJson}},"task":{"model":{modelJson}},"title":{"model":{modelJson}}}}',
+      },
       mcp_env_template: {
         OPENCODE_CONFIG_CONTENT:
           '{"$schema":"https://opencode.ai/config.json","mcp":{"kleiber":{"type":"local","enabled":true,"command":{wrapperCommandAndArgsJson},"environment":{"KLEIBER_SESSION_ID":"{sessionId}","KLEIBER_PROJECT_ID":"{projectId}","KLEIBER_MCP_SOCKET_PATH":"{mcpSocketPath}","KLEIBER_MCP_DEBUG_LOG_PATH":"{mcpDebugLogPath}","ELECTRON_RUN_AS_NODE":"1"}}}}',
       },
     },
     gemini_cli: {
+      model_flag: "--model",
       mcp_env_template: {
         GEMINI_CLI_SYSTEM_SETTINGS_PATH: "{mcpConfigPath}",
       },
@@ -282,6 +295,7 @@ interface CreateSessionIpcPayload {
   type?: string;
   cli?: string;
   role?: string;
+  model?: string;
   yolo?: boolean;
   workingDirectory?: string;
   mcpEnabled?: boolean;
@@ -319,43 +333,6 @@ function normalizeSessionType(
   }
 
   return role ? "agent_role" : "agent";
-}
-
-function addRoleLaunchArgs(
-  args: string[],
-  override: Record<string, unknown>,
-  role: string,
-): boolean {
-  const roleFlag =
-    typeof override.role_flag === "string"
-      ? override.role_flag
-      : typeof override.roleFlag === "string"
-        ? override.roleFlag
-        : null;
-  if (roleFlag) {
-    args.push(roleFlag, role);
-    return true;
-  }
-
-  const roleTemplate =
-    Array.isArray(override.role_args_template) && override.role_args_template.every((value) => typeof value === "string")
-      ? (override.role_args_template as string[])
-      : Array.isArray(override.roleArgsTemplate) && override.roleArgsTemplate.every((value) => typeof value === "string")
-        ? (override.roleArgsTemplate as string[])
-        : null;
-  if (roleTemplate) {
-    args.push(...roleTemplate.map((entry) => entry.replaceAll("{role}", role)));
-    return true;
-  }
-
-  const roleAsPositional =
-    override.role_as_positional === true || override.roleAsPositional === true;
-  if (roleAsPositional) {
-    args.push(role);
-    return true;
-  }
-
-  return false;
 }
 
 function commandExists(command: string): boolean {
@@ -400,37 +377,6 @@ function isExecutableFile(filePath: string): boolean {
   } catch {
     return false;
   }
-}
-
-function buildAgentBootstrapPrompt(role: string, cli: AgentCli, mcpEnabled: boolean): string {
-  const agentConfigPaths: Record<AgentCli, string> = {
-    codex: `.codex/agents/${role}.toml`,
-    claude: `.claude/agents/${role}.md`,
-    gemini: `.gemini/agents/${role}.md`,
-    opencode: `.opencode/agents/${role}.md`,
-  };
-
-  const agentConfigInstructions: Record<AgentCli, string> = {
-    codex: `adopt its description and developer_instructions for this top-level session`,
-    claude: `adopt its system prompt and instructions for this top-level session`,
-    gemini: `adopt its system prompt and instructions for this top-level session`,
-    opencode: `adopt its system prompt and instructions for this top-level session`,
-  };
-
-  const configPath = agentConfigPaths[cli] ?? `.agents/${role}.md`;
-  const configInstruction = agentConfigInstructions[cli] ?? `adopt its instructions for this top-level session`;
-
-  return [
-    `You are operating inside Kleiber as the ${role} role from ${BUNDLED_PACK_DISPLAY_NAME}.`,
-    "Treat other kleiber-agents roles as peer specialists in the same ecosystem.",
-    mcpEnabled
-      ? "Kleiber session orchestration may be available in this session through the existing MCP tools."
-      : "Kleiber session orchestration is disabled for this session, so do not assume MCP access.",
-    "Distinguish Kleiber session orchestration from harness-native delegation features.",
-    `Before doing anything else, read ${path.join(os.homedir(), ".agents", "skills", "project-spec-utils", "references", "kleiber-ecosystem.md")} if it exists, then read ${configPath} if it exists and ${configInstruction}.`,
-    "If Kleiber orchestration or tool availability is uncertain, inspect local context and available capabilities before claiming support.",
-    "Briefly state that the Kleiber agent context is loaded and wait for the user's task.",
-  ].join(" ");
 }
 
 export async function resolveSessionCreateOptions(
@@ -524,27 +470,25 @@ export async function resolveSessionCreateOptions(
   const canonicalCli = normalizeCliIdentifier(adapter.launchCommand) ?? normalizedCli;
   const override = resolveAgentOverride(packConfig, adapter.harnessName);
   const launchArgs: string[] = [];
+  const launchEnv: NodeJS.ProcessEnv = {
+    ...(role ? { KLEIBER_AGENT_ROLE: role } : {}),
+  };
   let launchPrompt: string | undefined;
   const requestedMcpEnabled = payload.mcpEnabled ?? true;
+  const model = payload.model?.trim() ? payload.model.trim() : null;
 
   if (role) {
-    const usedRoleActivation = addRoleLaunchArgs(launchArgs, override, role);
+    const usedRoleActivation = appendRoleLaunchArgs(launchArgs, override, role);
     if (!usedRoleActivation) {
-      const promptText = buildAgentBootstrapPrompt(role, canonicalCli, requestedMcpEnabled);
-      if (canonicalCli === "claude") {
-        // Claude Code reads positional args as file paths for initial context.
-        // The prompt file must come BEFORE --mcp-config in the arg list, otherwise
-        // Claude Code tries to parse the prompt file as a second MCP config (invalid JSON).
-        // Push into launchArgs here so MCP args are appended after it.
-        const promptDir = path.join(os.tmpdir(), "kleiber-bootstrap");
-        await mkdir(promptDir, { recursive: true });
-        const promptFile = path.join(promptDir, `${crypto.randomUUID()}.md`);
-        await writeFile(promptFile, promptText, "utf8");
-        launchArgs.push(promptFile);
-      } else {
-        launchPrompt = promptText;
-      }
+      const bootstrap = await resolveRoleBootstrap(role, canonicalCli, requestedMcpEnabled);
+      launchArgs.push(...bootstrap.args);
+      launchPrompt = bootstrap.prompt;
     }
+  }
+
+  if (model) {
+    appendModelLaunchArgs(launchArgs, override, model);
+    Object.assign(launchEnv, resolveModelLaunchEnv(override, model));
   }
 
   if (payload.yolo === true && adapter.yoloFlag) {
@@ -558,7 +502,7 @@ export async function resolveSessionCreateOptions(
   createSessionInput.launch = {
     command: adapter.launchCommand,
     args: launchArgs,
-    env: role ? { KLEIBER_AGENT_ROLE: role } : {},
+    env: launchEnv,
     ...(launchPrompt ? { prompt: launchPrompt } : {}),
   };
   createSessionInput.mcpEnabled = Boolean(mcpLaunchConfig);

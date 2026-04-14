@@ -15,6 +15,12 @@ import type { AgentPackManager } from "../pack/agent-pack-manager";
 import { mergeAgentPackConfig } from "../pack/agent-pack-config";
 import { resolveAgentOverride, resolveMcpLaunchConfig, type McpRuntimeOptions } from "../pack/mcp-launch-config";
 import { resolveHarnessAdapter } from "../pack/harness-adapter";
+import {
+  appendModelLaunchArgs,
+  appendRoleLaunchArgs,
+  resolveModelLaunchEnv,
+  resolveRoleBootstrap,
+} from "../pack/session-launch-config";
 import type {
   CreateSessionOptions,
   ManagedSessionRecord,
@@ -58,6 +64,7 @@ interface SpawnSessionArguments {
   project_id?: UUID;
   cli: AgentCli;
   role?: string;
+  model?: string;
   name?: string;
   yolo?: boolean;
   working_dir?: string;
@@ -286,8 +293,13 @@ export class McpOrchestrator {
 
     const workingDirectory = resolveWorkingDirectory(project.directoryPath, args.working_dir);
     const launchArgs: string[] = [];
+    const launchEnv: NodeJS.ProcessEnv = {
+      ...(role ? { KLEIBER_AGENT_ROLE: role } : {}),
+    };
     const effectiveYolo = resolveEffectiveYolo(callerSession.yolo, args.yolo, false);
     const mcpLaunchConfig = resolveMcpLaunchConfig(adapter.mcpInjection, override, this.#mcpRuntime);
+    const model = args.model?.trim() ? args.model.trim() : null;
+    let launchPrompt: string | undefined;
     const sessionInput: CreateSessionOptions = {
       projectId: project.id,
       parentSessionId: callerSession.id,
@@ -302,16 +314,33 @@ export class McpOrchestrator {
       launch: {
         command: adapter.launchCommand,
         args: launchArgs,
-        env: role ? { KLEIBER_AGENT_ROLE: role } : {},
+        env: launchEnv,
       },
     };
 
     if (role) {
-      appendRoleLaunchArgs(launchArgs, packConfig, adapter.harnessName, role);
+      const usedRoleActivation = appendRoleLaunchArgs(launchArgs, override, role);
+      if (!usedRoleActivation) {
+        const bootstrap = await resolveRoleBootstrap(role, cli, Boolean(mcpLaunchConfig));
+        launchArgs.push(...bootstrap.args);
+        launchPrompt = bootstrap.prompt;
+      }
+    }
+
+    if (model) {
+      appendModelLaunchArgs(launchArgs, override, model);
+      Object.assign(launchEnv, resolveModelLaunchEnv(override, model));
     }
 
     if (effectiveYolo && adapter.yoloFlag) {
       launchArgs.push(adapter.yoloFlag);
+    }
+
+    if (launchPrompt) {
+      sessionInput.launch = {
+        ...sessionInput.launch,
+        prompt: launchPrompt,
+      };
     }
 
     const session = await this.#sessionManager.createSession(sessionInput);
@@ -683,44 +712,6 @@ function resolveWorkingDirectory(projectDirectory: string, requestedWorkingDir: 
   }
 
   return resolved;
-}
-
-function appendRoleLaunchArgs(
-  args: string[],
-  config: AgentPackConfig,
-  harnessName: string,
-  role: string,
-): void {
-  const override = config.agent_overrides[harnessName];
-  if (!isRecord(override)) {
-    return;
-  }
-
-  const roleFlag =
-    typeof override.role_flag === "string"
-      ? override.role_flag
-      : typeof override.roleFlag === "string"
-        ? override.roleFlag
-        : null;
-  if (roleFlag) {
-    args.push(roleFlag, role);
-    return;
-  }
-
-  const roleTemplate =
-    Array.isArray(override.role_args_template) && override.role_args_template.every((value) => typeof value === "string")
-      ? (override.role_args_template as string[])
-      : Array.isArray(override.roleArgsTemplate) && override.roleArgsTemplate.every((value) => typeof value === "string")
-        ? (override.roleArgsTemplate as string[])
-        : null;
-  if (roleTemplate) {
-    args.push(...roleTemplate.map((entry) => entry.replaceAll("{role}", role)));
-    return;
-  }
-
-  if (override.role_as_positional === true || override.roleAsPositional === true) {
-    args.push(role);
-  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

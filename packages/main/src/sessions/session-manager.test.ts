@@ -708,6 +708,53 @@ it("injects MCP launch config into the spawned process environment and argv", as
   });
 });
 
+it("merges JSON config env values when launch env and MCP env target the same key", async () => {
+  const fakeFactory = new FakePtyFactory();
+  const manager = new SessionManager({
+    ptyFactory: fakeFactory.factory,
+  });
+
+  await manager.createSession({
+    projectId: "project-1",
+    type: "agent",
+    cli: "opencode",
+    workingDirectory: "/tmp/project-1",
+    mcpEnabled: true,
+    mcpLaunchConfig: {
+      injectionMethod: "env",
+      wrapperCommand: "/usr/bin/node",
+      wrapperArgs: ["/tmp/wrapper.js"],
+      envTemplate: {
+        OPENCODE_CONFIG_CONTENT:
+          '{"mcp":{"kleiber":{"type":"local","enabled":true,"command":{wrapperCommandAndArgsJson}}}}',
+      },
+    },
+    launch: {
+      command: "opencode",
+      args: [],
+      env: {
+        OPENCODE_CONFIG_CONTENT:
+          '{"agents":{"coder":{"model":"gpt-5.4-mini"},"task":{"model":"gpt-5.4-mini"}}}',
+      },
+    },
+  });
+
+  const spawnCall = fakeFactory.spawnCalls[0];
+  expect(JSON.parse(spawnCall?.env.OPENCODE_CONFIG_CONTENT as string)).toEqual({
+    agents: {
+      coder: { model: "gpt-5.4-mini" },
+      task: { model: "gpt-5.4-mini" },
+    },
+    mcp: {
+      kleiber: {
+        type: "local",
+        enabled: true,
+        command: ["/usr/bin/node", "/tmp/wrapper.js"],
+      },
+    },
+  });
+});
+
 it("writes session-local MCP config files when requested by the harness adapter", async () => {
   const fakeFactory = new FakePtyFactory();
   const manager = new SessionManager({
